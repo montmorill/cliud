@@ -10,7 +10,7 @@ fn main() {
         println!("accepted new connection");
         let mut buf = String::new();
         let _ = stream.read_to_string(&mut buf).unwrap();
-        println!(buf);
+        println!("{buf}");
         let _ = stream.write(b"HTTP/1.1 200 OK\r\n\r\n").unwrap();
     }
 }
