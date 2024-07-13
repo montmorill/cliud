@@ -40,7 +40,7 @@ fn main() -> Result<()> {
 
     for stream in listener.incoming() {
         println!("accepted new connection");
-        handle_connection(stream?)?;
+        std::thread::spawn(|| handle_connection(stream?));
     }
 
     Ok(())
