@@ -1,37 +1,42 @@
-use std::io::{prelude::*, BufReader};
+use http_server_starter_rust::request::{Request, Response, Result};
+use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
 
-fn handle_connection(mut stream: TcpStream) {
-    let reader = BufReader::new(&stream);
-    let mut lines = reader.lines().map(Result::unwrap).into_iter();
-    let line = lines.next().unwrap();
-    let mut splited = line.split(" ").into_iter();
-    let method = splited.next().unwrap();
-    let target = splited.next().unwrap();
-    let version = splited.next().unwrap();
+const PROTOCOL: &str = "HTTP/1.1";
 
-    assert_eq!(version, "HTTP/1.1");
-    match method {
+fn handle_connection(mut stream: TcpStream) -> Result<()> {
+    let request = Request::try_from_stream(&stream)?;
+    assert_eq!(request.protocol, PROTOCOL);
+    match request.method.as_str() {
         "GET" => {
-            let responce = match target {
-                "/" => "HTTP/1.1 200 OK\r\n\r\n",
-                _ => "HTTP/1.1 404 Not Found\r\n\r\n",
+            let target = request.target.as_str();
+            let response = if target == "/" {
+                Response::new(PROTOCOL, 200.to_string(), "OK")
+            } else if let Some(str) = target.strip_prefix("/echo/") {
+                Response::new(PROTOCOL, 200.to_string(), "OK")
+                    .header("Content-Type", "text/plain")
+                    .header("Content-Length", str.len().to_string())
+                    .body(str)
+            } else {
+                Response::new(PROTOCOL, 404.to_string(), "Not Found")
             };
-            println!("{responce}");
-            stream.write(responce.as_bytes()).unwrap();
-            stream.flush().unwrap();
+            stream.write(response.to_string().as_bytes())?;
+            stream.flush()?;
+            dbg!(request, response);
         }
         _ => unimplemented!(),
     }
+
+    Ok(())
 }
 
-fn main() {
-    println!("Logs from your program will appear here!");
+fn main() -> Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:4221")?;
 
-    let listener = TcpListener::bind("127.0.0.1:4221").unwrap();
-
-    for stream in listener.incoming().map(Result::unwrap) {
+    for stream in listener.incoming() {
         println!("accepted new connection");
-        handle_connection(stream);
+        handle_connection(stream?)?;
     }
+
+    Ok(())
 }
