@@ -12,6 +12,12 @@ fn handle_connection(mut stream: TcpStream) -> Result<()> {
             let target = request.target.as_str();
             let response = if target == "/" {
                 Response::new(PROTOCOL, 200.to_string(), "OK")
+            } else if target == "/user-agent" {
+                let user_agent = &request.headers["User-Agent"];
+                Response::new(PROTOCOL, 200.to_string(), "OK")
+                    .header("Content-Type", "text/plain")
+                    .header("Content-Length", user_agent.len().to_string())
+                    .body(user_agent)
             } else if let Some(str) = target.strip_prefix("/echo/") {
                 Response::new(PROTOCOL, 200.to_string(), "OK")
                     .header("Content-Type", "text/plain")
