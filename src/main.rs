@@ -28,7 +28,6 @@ fn handle_connection(mut stream: TcpStream) -> Result<()> {
             };
             stream.write(response.to_string().as_bytes())?;
             stream.flush()?;
-            dbg!(request, response);
         }
         _ => unimplemented!(),
     }
