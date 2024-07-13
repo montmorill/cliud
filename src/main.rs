@@ -1,15 +1,14 @@
-use std::io::prelude::*;
+use std::io::{prelude::*, BufReader};
 use std::net::{TcpListener, TcpStream};
 
 fn handle_connection(mut stream: TcpStream) {
-    let mut buffer = [0; 512];
-    let _ = stream.read(&mut buffer).unwrap();
-    let request = String::from_utf8_lossy(&buffer);
-    let mut splited = request.split("\r\n").into_iter();
-    let mut line = splited.next().unwrap().split(" ").into_iter();
-    let method = line.next().unwrap();
-    let target = line.next().unwrap();
-    let version = line.next().unwrap();
+    let reader = BufReader::new(&stream);
+    let mut lines = reader.lines().map(Result::unwrap).into_iter();
+    let line = lines.next().unwrap();
+    let mut splited = line.split(" ").into_iter();
+    let method = splited.next().unwrap();
+    let target = splited.next().unwrap();
+    let version = splited.next().unwrap();
 
     assert_eq!(version, "HTTP/1.1");
     match method {
