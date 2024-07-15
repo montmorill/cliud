@@ -64,7 +64,7 @@ pub struct Response {
     pub status_code: usize,
     pub description: String,
     pub headers: HashMap<String, String>,
-    pub body: String,
+    pub body: Vec<u8>,
 }
 
 impl Response {
@@ -79,7 +79,7 @@ impl Response {
             status_code: status_code.into(),
             description: description.into(),
             headers: HashMap::new(),
-            body: String::new(),
+            body: Vec::new(),
         }
     }
 
@@ -88,8 +88,8 @@ impl Response {
         self
     }
 
-    pub fn body(mut self, body: &str) -> Self {
-        self.body += &body;
+    pub fn body(mut self, body: &[u8]) -> Self {
+        self.body.extend(body);
         self
     }
 }
@@ -104,7 +104,7 @@ impl std::fmt::Display for Response {
         for (key, value) in &self.headers {
             write!(f, "{key}: {value}\r\n")?;
         }
-        write!(f, "\r\n{}", self.body)?;
+        write!(f, "\r\n{}", String::from_utf8_lossy(&self.body))?;
         Ok(())
     }
 }
