@@ -35,7 +35,7 @@ async fn handle_connection(mut stream: TcpStream) {
     let mut response = handle_request(request.clone()).await;
 
     if let Some(encodings) = request.headers.get("Accept-Encoding") {
-        let mut encodings = encodings.split(" ");
+        let mut encodings = encodings.split(",").map(str::trim);
         if encodings.contains(&"gzip") {
             let buf = Vec::from(mem::take(&mut response.body));
             response = response.header("Content-Encoding", "gzip").body(
