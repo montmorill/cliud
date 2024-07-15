@@ -3,6 +3,7 @@ use std::mem;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use http_server_starter_rust::request::{Request, Response};
+use itertools::Itertools;
 use lazy_static::lazy_static;
 use tokio::fs;
 use tokio::io::{AsyncWriteExt, BufReader};
@@ -33,10 +34,11 @@ async fn handle_connection(mut stream: TcpStream) {
 
     let mut response = handle_request(request.clone()).await;
 
-    if let Some(encoding) = request.headers.get("Accept-Encoding") {
-        if encoding == "gzip" {
+    if let Some(encodings) = request.headers.get("Accept-Encoding") {
+        let mut encodings = encodings.split(" ");
+        if encodings.contains(&"gzip") {
             let buf = Vec::from(mem::take(&mut response.body));
-            response = response.header("Content-Encoding", encoding).body(
+            response = response.header("Content-Encoding", "gzip").body(
                 &GzEncoder::new(buf, Compression::default())
                     .finish()
                     .unwrap(),
