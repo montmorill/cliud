@@ -1,76 +1,83 @@
 use std::collections::HashMap;
-use std::fmt::Display;
-use std::io::{BufRead, BufReader};
-use std::net::TcpStream;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 
 #[derive(Debug, Clone)]
 pub struct Request {
     pub method: String,
     pub target: String,
-    pub protocol: String,
+    pub version: String,
     pub headers: HashMap<String, String>,
-    // pub body: Vec<u8>,
+    pub body: String,
+}
+
+async fn read_line(reader: &mut (impl AsyncBufReadExt + Unpin)) -> std::io::Result<String> {
+    let mut buf = String::new();
+    loop {
+        reader.read_line(&mut buf).await?;
+
+        if buf.ends_with("\r\n") {
+            buf.pop(); // pop the `\n`
+            buf.pop(); // and the `\r`
+            break Ok(buf);
+        }
+    }
 }
 
 impl Request {
-    pub fn try_from_stream(stream: &TcpStream) -> Result<Self> {
-        let mut reader = BufReader::new(stream);
-
-        let request_line = read_line(&mut reader)?;
+    pub async fn from_async_buf(
+        reader: &mut (impl AsyncReadExt + AsyncBufReadExt + Unpin),
+    ) -> Self {
+        let request_line = read_line(reader).await.unwrap();
         let mut splited = request_line.split(" ").into_iter();
-        let method = splited.next().ok_or(Error::Missing("method"))?.into();
-        let target = splited.next().ok_or(Error::Missing("target"))?.into();
-        let protocol = splited.next().ok_or(Error::Missing("protocol"))?.into();
+        let method = splited.next().unwrap().into();
+        let target = splited.next().unwrap().into();
+        let version = splited.next().unwrap().into();
 
-        let mut headers = HashMap::new();
+        let mut headers: HashMap<String, String> = HashMap::new();
 
-        while let Some((key, value)) = read_line(&mut reader)?.split_once(":") {
+        while let Some((key, value)) = read_line(reader).await.unwrap().split_once(":") {
             headers.insert(key.trim().into(), value.trim().into());
         }
 
-        // let mut body = Vec::new();
-        // reader.read_to_end(&mut body)?;
+        let length = headers
+            .get("Content-Length")
+            .map_or(0, |length| length.as_str().parse::<usize>().unwrap());
+        let mut body = Vec::with_capacity(length);
+        if length != 0 {
+            reader.read_buf(&mut body).await.unwrap();
+        }
+        let body = String::from_utf8_lossy(&body).to_string();
 
-        Ok(Self {
+        Self {
             method,
             target,
-            protocol,
+            version,
             headers,
-            // body,
-        })
+            body,
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Response {
-    pub protocol: String,
-    pub code: String,
-    pub status: String,
+    pub version: String,
+    pub status_code: usize,
+    pub description: String,
     pub headers: HashMap<String, String>,
     pub body: String,
 }
 
-impl Display for Response {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} {} {}\r\n", self.protocol, self.code, self.status)?;
-        for (key, value) in &self.headers {
-            write!(f, "{key}: {value}\r\n")?;
-        }
-        write!(f, "\r\n{}", self.body)?;
-        Ok(())
-    }
-}
-
 impl Response {
     pub fn new(
-        protocol: impl Into<String>,
-        code: impl Into<String>,
-        status: impl Into<String>,
+        // version: impl Into<String>,
+        status_code: usize,
+        description: impl Into<String>,
     ) -> Self {
         Self {
-            protocol: protocol.into(),
-            code: code.into(),
-            status: status.into(),
+            // version: version.into(),
+            version: "HTTP/1.1".into(),
+            status_code: status_code.into(),
+            description: description.into(),
             headers: HashMap::new(),
             body: String::new(),
         }
@@ -81,39 +88,23 @@ impl Response {
         self
     }
 
-    pub fn body(mut self, body: impl Into<String>) -> Self {
-        self.body = body.into();
+    pub fn body(mut self, body: &str) -> Self {
+        self.body += &body;
         self
     }
-
-    pub fn build(self) -> Response {
-        Response {
-            protocol: self.protocol,
-            code: self.code,
-            status: self.status,
-            headers: self.headers,
-            body: self.body,
-        }
-    }
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error("invalid data to decode")]
-    InvalidData(#[from] std::io::Error),
-    #[error("missing {0}")]
-    Missing(&'static str),
-}
-pub type Result<T> = std::result::Result<T, Error>;
-
-fn read_line(reader: &mut impl BufRead) -> std::io::Result<String> {
-    let mut buf = String::new();
-    loop {
-        (*reader).read_line(&mut buf)?;
-        if buf.ends_with("\r\n") {
-            buf.pop(); // pop the `\n`
-            buf.pop(); // and the `\r`
-            break Ok(buf);
+impl std::fmt::Display for Response {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} {} {}\r\n",
+            self.version, self.status_code, self.description
+        )?;
+        for (key, value) in &self.headers {
+            write!(f, "{key}: {value}\r\n")?;
         }
+        write!(f, "\r\n{}", self.body)?;
+        Ok(())
     }
 }
