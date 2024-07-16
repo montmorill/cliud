@@ -1,4 +1,6 @@
+use nom::HexDisplay;
 use std::collections::HashMap;
+use std::fmt::Write;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 
 #[derive(Debug, Clone)]
@@ -7,7 +9,7 @@ pub struct Request {
     pub target: String,
     pub version: String,
     pub headers: HashMap<String, String>,
-    pub body: String,
+    pub body: Vec<u8>,
 }
 
 async fn read_line(reader: &mut (impl AsyncBufReadExt + Unpin)) -> std::io::Result<String> {
@@ -26,8 +28,8 @@ async fn read_line(reader: &mut (impl AsyncBufReadExt + Unpin)) -> std::io::Resu
 impl Request {
     pub async fn from_async_buf(
         reader: &mut (impl AsyncReadExt + AsyncBufReadExt + Unpin),
-    ) -> Self {
-        let request_line = read_line(reader).await.unwrap();
+    ) -> std::io::Result<Self> {
+        let request_line = read_line(reader).await?;
         let mut splited = request_line.split(" ").into_iter();
         let method = splited.next().unwrap().into();
         let target = splited.next().unwrap().into();
@@ -35,7 +37,7 @@ impl Request {
 
         let mut headers: HashMap<String, String> = HashMap::new();
 
-        while let Some((key, value)) = read_line(reader).await.unwrap().split_once(":") {
+        while let Some((key, value)) = read_line(reader).await?.split_once(":") {
             headers.insert(key.trim().into(), value.trim().into());
         }
 
@@ -44,21 +46,20 @@ impl Request {
             .map_or(0, |length| length.as_str().parse::<usize>().unwrap());
         let mut body = Vec::with_capacity(length);
         if length != 0 {
-            reader.read_buf(&mut body).await.unwrap();
+            reader.read_buf(&mut body).await?;
         }
-        let body = String::from_utf8_lossy(&body).to_string();
 
-        Self {
+        Ok(Self {
             method,
             target,
             version,
             headers,
             body,
-        }
+        })
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Response {
     pub version: String,
     pub status_code: usize,
@@ -92,19 +93,41 @@ impl Response {
         self.body.extend(body);
         self
     }
+
+    pub fn response_headers(&self) -> Result<String, std::fmt::Error> {
+        let mut buf = String::new();
+        write!(
+            buf,
+            "{} {} {}\r\n",
+            self.version, self.status_code, self.description
+        )?;
+        for (key, value) in &self.headers {
+            write!(buf, "{key}: {value}\r\n")?;
+        }
+        Ok(buf)
+    }
+
+    pub fn to_bytes(&self) -> Result<Vec<u8>, std::fmt::Error> {
+        let mut bytes = self.response_headers()?.as_bytes().to_vec();
+        bytes.extend(b"\r\n");
+        bytes.extend(&self.body);
+        Ok(bytes)
+    }
 }
 
 impl std::fmt::Display for Response {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} {} {}\r\n",
-            self.version, self.status_code, self.description
-        )?;
-        for (key, value) in &self.headers {
-            write!(f, "{key}: {value}\r\n")?;
-        }
-        write!(f, "\r\n{}", String::from_utf8_lossy(&self.body))?;
-        Ok(())
+            "{}\r\n{}",
+            self.response_headers()?,
+            String::from_utf8_lossy(&self.body)
+        )
+    }
+}
+
+impl std::fmt::Debug for Response {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}\r\n{}", self.response_headers()?, self.body.to_hex(8))
     }
 }
