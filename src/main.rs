@@ -1,18 +1,16 @@
-use flate2::write::GzEncoder;
-use flate2::Compression;
-use http_server_starter_rust::request::{Request, Response};
-use itertools::Itertools;
-use std::io::Write;
-use std::mem;
+use cliud::compress::{escape, try_compress};
+use cliud::request::{Request, Response};
+use colored::*;
 use std::net::SocketAddr;
 use tokio::fs;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let host = "127.0.0.1:4221";
     let listener = TcpListener::bind(host).await?;
-    println!("listening on {host}...");
+    println!("Listening on {host}...");
 
     loop {
         let (stream, address) = listener.accept().await?;
@@ -20,83 +18,119 @@ async fn main() -> std::io::Result<()> {
     }
 }
 
-#[derive(thiserror::Error, Debug)]
-enum Error {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+async fn handle_connection(mut stream: TcpStream, address: SocketAddr) -> std::io::Result<()> {
+    let request = Request::from_buf_async(BufReader::new(&mut stream)).await?;
 
-    #[error("Formatting error: {0}")]
-    Fmt(#[from] std::fmt::Error),
-}
 
-async fn handle_connection(mut stream: TcpStream, address: SocketAddr) -> Result<(), Error> {
-    println!("connected with {address}!");
+    let mut response = handle_request(&request).await;
 
-    let (mut reader, mut writer) = stream.split();
-    let mut reader = BufReader::new(&mut reader);
-
-    let request = Request::from_async_buf(&mut reader).await?;
-    let mut response = handle_request(request.clone()).await?;
-
-    if let Some(encodings) = request.headers.get("Accept-Encoding") {
-        let mut encodings = encodings.split(",").map(str::trim);
-        if encodings.contains(&"gzip") {
-            let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-            encoder.write_all(mem::take(&mut response.body.as_slice()))?;
-            let body = encoder.finish()?;
-            response = response
-                .header("Content-Encoding", "gzip")
-                .header("Content-Length", body.len().to_string());
-            response.body = body;
+    // compress
+    if !response.body.is_empty() {
+        if let Some(encodings) = request.headers.get("Accept-Encoding") {
+            for encoding in encodings.split(",").map(str::trim) {
+                if let Some(compressed) = try_compress(encoding, &response.body)? {
+                    response = response.header("Content-Encoding", encoding);
+                    response.body = compressed;
+                    break;
+                }
+            }
         }
     }
 
+    let length = response.body.len();
+    if length != 0 {
+        response = response.header("Content-Length", length);
+    }
 
-    writer.write_all(&response.to_bytes()?).await?;
-    writer.flush().await?;
+    stream.write_all(&response.to_bytes()).await?;
+    stream.flush().await?;
 
-    dbg!(request, response);
-    println!("disconnected with {address}!");
+    eprintln!(
+        r#"{} - "{}" - {}"#,
+        address,
+        request.request_line().bright_cyan(),
+        response
+            .response_line()
+            .color(match response.status_code.to_string().chars().next() {
+                Some('1') => "cyan",
+                Some('2') => "green",
+                Some('3') => "yellow",
+                Some('4') => "red",
+                Some('5') => "purple",
+                _ => "normal",
+            }),
+    );
 
     Ok(())
 }
 
-async fn handle_request(request: Request) -> std::io::Result<Response> {
-    let directory = std::env::args().nth(2).unwrap_or("./".to_string());
+pub async fn handle_request(request: &Request) -> Response {
+    if let Some(upgrade) = request.headers.get("Upgrade") {
+        if upgrade == "websocket" {
+            use base64::prelude::*;
+            use sha1_smol::Sha1;
 
-    match request.method.as_str() {
-        "GET" => {
-            if request.target == "/" {
-                return Ok(Response::new(200, "OK"));
-            } else if let Some(content) = request.target.strip_prefix("/echo/") {
-                return Ok(Response::new(200, "OK")
-                    .header("Content-Type", "text/plain")
-                    .header("Content-Length", content.as_bytes().len().to_string())
-                    .body(content.as_bytes()));
-            } else if request.target == "/user-agent" {
-                if let Some(user_agent) = request.headers.get("User-Agent") {
-                    return Ok(Response::new(200, "OK")
-                        .header("Content-Type", "text/plain")
-                        .header("Content-Length", user_agent.as_bytes().len().to_string())
-                        .body(user_agent.as_bytes()));
-                }
-            } else if let Some(filename) = request.target.strip_prefix("/files/") {
-                if let Ok(content) = fs::read(format!("{}/{}", directory, filename)).await {
-                    return Ok(Response::new(200, "OK")
-                        .header("Content-Type", "application/octet-stream")
-                        .header("Content-Length", content.len().to_string())
-                        .body(&content));
-                }
-            }
+            if let Some(key) = request.headers.get("Sec-WebSocket-Key") {
+                let concated = [key, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"].concat();
+                let hashed = Sha1::from(concated).digest().to_string();
+                let encoded = BASE64_STANDARD.encode(hashed);
+
+                return Response::new(101, "Switching Protocols")
+                    .header("Upgrade", "websocket")
+                    .header("Connection", "Upgrade")
+                    .header("Sec-Websocket-Accept", encoded)
+                    .header("Sec-Websocket-Version", "13");
+            } else {
+                return Response::new(400, "Bad Request");
+            };
         }
-        "POST" => {
-            if let Some(filename) = request.target.strip_prefix("/files/") {
-                fs::write(format!("{}/{}", directory, filename), request.body).await?;
-                return Ok(Response::new(201, "Created"));
-            }
-        }
-        _ => return Ok(Response::new(501, "Not Implemented")),
     }
 
-    Ok(Response::new(404, "Not Found"))
+    // (index)
+    if request.target == "/" {
+        return Response::plain(200, "OK").body(b"Hello, world!");
+    }
+    // /echo/{content}
+    else if let Some(content) = request.target.strip_prefix("/echo/") {
+        return Response::plain(200, "OK").body(&content);
+    }
+    // /cat/{status_code}/{description}/{body}
+    else if let Some(path) = request.target.strip_prefix("/cat/") {
+        let path = escape(path.to_owned());
+        let mut splited = path.split('/');
+        let status_code = splited.next().unwrap_or("404");
+        let description = splited.next().unwrap_or("Not Found");
+        let body = splited.collect::<Vec<_>>().join("/");
+        return Response::new(status_code, description).body(&body);
+    }
+    // /user-agent
+    else if request.target == "/user-agent" {
+        if let Some(user_agent) = request.headers.get("User-Agent") {
+            return Response::plain(200, "OK").body(user_agent);
+        }
+    }
+    // /files/filename
+    else if let Some(filename) = request.target.strip_prefix("/files/") {
+        let directory = std::env::args().nth(2).unwrap_or("./".to_string());
+        let path = format!("{directory}/{filename}");
+        return match request.method.as_str() {
+            "GET" => {
+                if let Ok(content) = fs::read(path).await {
+                    Response::plain(200, "OK").body(&content)
+                } else {
+                    Response::new(404, "Not Found")
+                }
+            }
+            "POST" => {
+                if fs::write(path, &request.body).await.is_ok() {
+                    Response::new(201, "Created")
+                } else {
+                    Response::new(500, "Internal Server Error")
+                }
+            }
+            _ => Response::new(501, "Not Implemented"),
+        };
+    }
+
+    Response::new(404, "Not Found")
 }
