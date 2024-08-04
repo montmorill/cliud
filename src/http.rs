@@ -2,10 +2,14 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 
-async fn read_line(reader: &mut (impl AsyncBufReadExt + Unpin)) -> std::io::Result<String> {
+pub fn escape(raw: String) -> String {
+    raw.replace("%20", " ")
+}
+
+async fn read_line(stream: &mut (impl AsyncBufReadExt + Unpin)) -> std::io::Result<String> {
     let mut buf = String::new();
     loop {
-        reader.read_line(&mut buf).await?;
+        stream.read_line(&mut buf).await?;
 
         if buf.ends_with("\r\n") {
             buf.pop(); // pop the `\n`
@@ -26,9 +30,9 @@ pub struct Request {
 
 impl Request {
     pub async fn from_buf_async(
-        mut reader: impl AsyncReadExt + AsyncBufReadExt + Unpin,
+        mut stream: impl AsyncReadExt + AsyncBufReadExt + Unpin,
     ) -> std::io::Result<Self> {
-        let request_line = read_line(&mut reader).await?;
+        let request_line = read_line(&mut stream).await?;
         let mut splited = request_line.split(" ").into_iter();
         let method = splited.next().unwrap().into();
         let target = splited.next().unwrap().into();
@@ -36,7 +40,7 @@ impl Request {
 
         let mut headers: HashMap<String, String> = HashMap::new();
 
-        while let Some((key, value)) = read_line(&mut reader).await?.split_once(":") {
+        while let Some((key, value)) = read_line(&mut stream).await?.split_once(":") {
             headers.insert(key.trim().into(), value.trim().into());
         }
 
@@ -45,7 +49,7 @@ impl Request {
             .map_or(0, |length| length.as_str().parse::<usize>().unwrap());
         let mut body = Vec::with_capacity(length);
         if length != 0 {
-            reader.read_buf(&mut body).await?;
+            stream.read_exact(&mut body).await?;
         }
 
         Ok(Self {

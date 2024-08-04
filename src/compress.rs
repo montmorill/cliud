@@ -3,10 +3,6 @@ use flate2::write::{DeflateEncoder, GzEncoder, ZlibEncoder};
 use flate2::Compression;
 use std::io::{Result, Write};
 
-pub fn escape(raw: String) -> String {
-    raw.replace("%20", " ")
-}
-
 pub fn try_compress(encoding: &str, data: &[u8]) -> Result<Option<Vec<u8>>> {
     Ok(match encoding {
         "gzip" => {
