@@ -133,16 +133,16 @@ async fn send_packet(
     Ok(())
 }
 
-type AsyncOutput<T = ()> = Pin<Box<dyn Future<Output = T>>>;
+type AsyncOutput<T = ()> = Pin<Box<dyn Send + Sync + Future<Output = T>>>;
 pub struct WebSocket<'a, Stream: AsyncReadExt + AsyncWriteExt + Unpin> {
     stream: Stream,
     waiting_pong: bool,
     half_closed: bool,
     timeout: Duration,
     last_ping_time: Instant,
-    on_message: Option<&'a dyn Fn(Vec<u8>) -> AsyncOutput>,
-    on_close: Option<&'a dyn Fn(Vec<u8>) -> AsyncOutput>,
-    on_pong: Option<&'a dyn Fn(Duration) -> AsyncOutput>,
+    on_message: Option<&'a (dyn Sync + Send + Fn(Vec<u8>) -> AsyncOutput)>,
+    on_close: Option<&'a (dyn Sync + Send + Fn(Vec<u8>) -> AsyncOutput)>,
+    on_pong: Option<&'a (dyn Sync + Send + Fn(Duration) -> AsyncOutput)>,
 }
 
 impl<'a, Stream: AsyncReadExt + AsyncWriteExt + Unpin> WebSocket<'a, Stream> {
@@ -164,17 +164,17 @@ impl<'a, Stream: AsyncReadExt + AsyncWriteExt + Unpin> WebSocket<'a, Stream> {
         self
     }
 
-    pub fn on_message(mut self, f: &'a impl Fn(Vec<u8>) -> AsyncOutput) -> Self {
+    pub fn on_message(mut self, f: &'a (impl Sync + Send + Fn(Vec<u8>) -> AsyncOutput)) -> Self {
         self.on_message = Some(f);
         self
     }
 
-    pub fn on_close(mut self, f: &'a impl Fn(Vec<u8>) -> AsyncOutput) -> Self {
+    pub fn on_close(mut self, f: &'a (impl Sync + Send + Fn(Vec<u8>) -> AsyncOutput)) -> Self {
         self.on_close = Some(f);
         self
     }
 
-    pub fn on_pong(mut self, f: &'a impl Fn(Duration) -> AsyncOutput) -> Self {
+    pub fn on_pong(mut self, f: &'a (impl Sync + Send + Fn(Duration) -> AsyncOutput)) -> Self {
         self.on_pong = Some(f);
         self
     }
