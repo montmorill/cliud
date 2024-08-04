@@ -1,10 +1,7 @@
-use std::future::Future;
-use std::net::SocketAddr;
-use std::pin::Pin;
+use std::ops::{Deref, DerefMut};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
-use tokio::time::timeout;
+use tokio::time;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -19,11 +16,11 @@ pub enum Error {
 }
 pub type Result<T> = std::result::Result<T, Error>;
 
-type Packet = (Opcode, Vec<u8>);
+pub type Packet = (Opcode, Vec<u8>);
 
 #[repr(u8)]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-enum Opcode {
+pub enum Opcode {
     Continue = 0,
     Text = 1,
     Binary = 2,
@@ -48,7 +45,9 @@ impl TryFrom<u8> for Opcode {
     }
 }
 
-async fn receive_packet(stream: &mut (impl AsyncReadExt + Unpin)) -> Result<Packet> {
+async fn receive_packet(
+    mut stream: impl DerefMut<Target = impl AsyncReadExt + Unpin>,
+) -> Result<Packet> {
     let mut mask = [0u8; 4];
     let mut data = Vec::new();
     let mut buf = Vec::new();
@@ -93,7 +92,7 @@ async fn receive_packet(stream: &mut (impl AsyncReadExt + Unpin)) -> Result<Pack
 }
 
 async fn send_packet(
-    stream: &mut (impl AsyncWriteExt + Unpin),
+    mut stream: impl DerefMut<Target = impl AsyncWriteExt + Unpin>,
     (opcode, mut data): Packet,
     mask: u32,
 ) -> Result<()> {
@@ -133,123 +132,92 @@ async fn send_packet(
     Ok(())
 }
 
-type AsyncOutput<T = ()> = Pin<Box<dyn Send + Sync + Future<Output = T>>>;
-pub struct WebSocket<'a, Stream: AsyncReadExt + AsyncWriteExt + Unpin> {
-    stream: Stream,
+#[derive(Debug)]
+pub struct WebSocketState {
+    pub mask: u32,
+    pub timeout: Duration,
     waiting_pong: bool,
     half_closed: bool,
-    timeout: Duration,
     last_ping_time: Instant,
-    on_message: Option<&'a (dyn Sync + Send + Fn(Vec<u8>) -> AsyncOutput)>,
-    on_close: Option<&'a (dyn Sync + Send + Fn(Vec<u8>) -> AsyncOutput)>,
-    on_pong: Option<&'a (dyn Sync + Send + Fn(Duration) -> AsyncOutput)>,
 }
 
-impl<'a, Stream: AsyncReadExt + AsyncWriteExt + Unpin> WebSocket<'a, Stream> {
-    pub fn new(stream: Stream) -> Self {
+impl Default for WebSocketState {
+    fn default() -> Self {
         Self {
-            stream,
-            waiting_pong: true,
-            half_closed: false,
+            mask: 0,
             timeout: Duration::from_secs(5),
+            waiting_pong: false,
+            half_closed: false,
             last_ping_time: Instant::now(),
-            on_message: None,
-            on_close: None,
-            on_pong: None,
         }
     }
+}
 
-    pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
-        self
+#[allow(async_fn_in_trait)]
+pub trait WebSocket: Sized + Send + Sync {
+    type Stream: AsyncReadExt + AsyncWriteExt + Unpin;
+    async fn stream_mut(&self) -> impl DerefMut<Target = Self::Stream>;
+    async fn state(&self) -> impl Deref<Target = WebSocketState>;
+    async fn state_mut(&self) -> impl DerefMut<Target = WebSocketState>;
+
+    async fn on_message(&mut self, message: Vec<u8>) -> Result<()>;
+    async fn on_close(&mut self, reason: Vec<u8>) -> Result<()>;
+    async fn on_pong(&mut self, delay: Duration) -> Result<()>;
+
+    async fn send_packet(&mut self, packet: Packet) -> Result<()> {
+        send_packet(self.stream_mut().await, packet, self.state().await.mask).await
     }
 
-    pub fn on_message(mut self, f: &'a (impl Sync + Send + Fn(Vec<u8>) -> AsyncOutput)) -> Self {
-        self.on_message = Some(f);
-        self
+    async fn send_text(&mut self, text: String) -> Result<()> {
+        self.send_packet((Opcode::Text, text.into())).await
     }
 
-    pub fn on_close(mut self, f: &'a (impl Sync + Send + Fn(Vec<u8>) -> AsyncOutput)) -> Self {
-        self.on_close = Some(f);
-        self
+    async fn send_binary(&mut self, data: Vec<u8>) -> Result<()> {
+        self.send_packet((Opcode::Binary, data)).await
     }
 
-    pub fn on_pong(mut self, f: &'a (impl Sync + Send + Fn(Duration) -> AsyncOutput)) -> Self {
-        self.on_pong = Some(f);
-        self
-    }
-
-    async fn send_packet(&mut self, packet: Packet, mask: u32) -> Result<()> {
-        send_packet(&mut self.stream, packet, mask).await
-    }
-
-    pub async fn send_text(&mut self, text: String) -> Result<()> {
-        self.send_packet((Opcode::Text, text.into()), 0).await
-    }
-
-    pub async fn send_binary(&mut self, data: Vec<u8>) -> Result<()> {
-        self.send_packet((Opcode::Binary, data), 0).await
-    }
-
-    pub async fn close(&mut self, reason: String) -> Result<()> {
-        self.half_closed = true;
-        self.send_packet((Opcode::Close, reason.into()), 0).await
+    async fn close(&mut self, reason: String) -> Result<()> {
+        self.state_mut().await.half_closed = true;
+        self.send_packet((Opcode::Close, reason.into())).await
     }
 
     async fn ping(&mut self) -> Result<()> {
-        self.last_ping_time = Instant::now();
-        self.send_packet((Opcode::Ping, Vec::new()), 0).await
+        self.state_mut().await.last_ping_time = Instant::now();
+        self.state_mut().await.waiting_pong = true;
+        self.send_packet((Opcode::Ping, Vec::new())).await
     }
 
-    pub async fn run(&mut self) -> Result<()> {
+    async fn run(&mut self) -> Result<()> {
         loop {
-            let packet = receive_packet(&mut self.stream);
-            let (opcode, data) = match timeout(self.timeout, packet).await {
+            let packet = receive_packet(self.stream_mut().await);
+            let timeout = self.state().await.timeout;
+            let (opcode, data) = match time::timeout(timeout, packet).await {
                 Ok(packet) => packet?,
                 Err(_) => {
-                    if self.waiting_pong {
+                    if self.state().await.waiting_pong {
                         return Err(Error::PongTimeout);
                     }
                     self.ping().await?;
-                    self.waiting_pong = true;
                     continue;
                 }
             };
+            self.state_mut().await.waiting_pong = false;
             match opcode {
-                Opcode::Text | Opcode::Binary => {
-                    if let Some(on_message) = self.on_message {
-                        on_message(data).await;
-                    }
-                }
+                Opcode::Text | Opcode::Binary => self.on_message(data).await?,
                 Opcode::Close => {
-                    if let Some(on_close) = self.on_close {
-                        on_close(data.clone()).await;
-                    }
-                    if !self.half_closed {
-                        self.send_packet((opcode, data), 0).await?;
+                    if !self.state().await.half_closed {
+                        self.on_close(data.clone()).await?;
+                        self.send_packet((opcode, data)).await?;
                     }
                     return Ok(());
                 }
-                Opcode::Ping => self.send_packet((Opcode::Pong, data), 0).await?,
+                Opcode::Ping => self.send_packet((Opcode::Pong, data)).await?,
                 Opcode::Pong => {
-                    if let Some(on_pong) = self.on_pong {
-                        on_pong(Instant::now() - self.last_ping_time).await;
-                    }
+                    let delay = Instant::now() - self.state().await.last_ping_time;
+                    self.on_pong(delay).await?;
                 }
-
                 _ => unreachable!(),
             }
         }
     }
-}
-
-pub async fn handle_websocket(stream: TcpStream, address: SocketAddr) -> Result<()> {
-    WebSocket::new(stream)
-        .on_message(&|msg| {
-            Box::pin(async move {
-                eprintln!("receive msg from {address}: {msg:?}");
-            })
-        })
-        .run()
-        .await
 }

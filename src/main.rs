@@ -1,11 +1,14 @@
 use cliud::compress::try_compress;
 use cliud::http::{escape, Request, Response};
-use cliud::websocket::{handle_websocket, Result};
+use cliud::websocket::{Result, WebSocket, WebSocketState};
 use colored::*;
 use std::net::SocketAddr;
+use std::ops::{Deref, DerefMut};
+use std::time::Duration;
 use tokio::fs;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{Mutex, RwLock};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -15,7 +18,7 @@ async fn main() -> std::io::Result<()> {
 
     loop {
         let (stream, address) = listener.accept().await?;
-        tokio::spawn(handle_connection(stream, address));
+        tokio::spawn(async move { handle_connection(stream, address).await.unwrap() });
     }
 }
 
@@ -62,7 +65,13 @@ async fn handle_connection(mut stream: TcpStream, address: SocketAddr) -> Result
 
     if let Some(upgarde) = response.headers.get("Upgrade") {
         if upgarde == "websocket" {
-            handle_websocket(stream, address).await?;
+            EchoWebSocket {
+                stream: Mutex::new(stream),
+                state: RwLock::new(WebSocketState::default()),
+                address,
+            }
+            .run()
+            .await?;
         }
     }
 
@@ -136,4 +145,42 @@ pub async fn handle_request(request: &Request) -> Response {
     }
 
     Response::new(404, "Not Found")
+}
+
+struct EchoWebSocket {
+    stream: Mutex<TcpStream>,
+    state: RwLock<WebSocketState>,
+    address: SocketAddr,
+}
+
+impl WebSocket for EchoWebSocket {
+    type Stream = TcpStream;
+
+    async fn stream_mut(&self) -> impl DerefMut<Target = Self::Stream> {
+        self.stream.lock().await
+    }
+
+    async fn state(&self) -> impl Deref<Target = WebSocketState> {
+        self.state.read().await
+    }
+
+    async fn state_mut(&self) -> impl DerefMut<Target = WebSocketState> {
+        self.state.write().await
+    }
+
+    async fn on_message(&mut self, message: Vec<u8>) -> Result<()> {
+        eprintln!("receive message from {}: {message:?}", self.address);
+        self.send_binary(message).await?;
+        Ok(())
+    }
+
+    async fn on_close(&mut self, reason: Vec<u8>) -> Result<()> {
+        eprintln!("disconnected with {}: {reason:?}", self.address);
+        Ok(())
+    }
+
+    async fn on_pong(&mut self, delay: Duration) -> Result<()> {
+        eprintln!("receive pong from {} in {delay:?}", self.address);
+        Ok(())
+    }
 }
