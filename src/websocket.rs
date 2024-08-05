@@ -153,17 +153,43 @@ impl Default for WebSocketState {
     }
 }
 
+impl WebSocketState {
+    pub fn mask(mut self, mask: u32) -> Self {
+        self.mask = mask;
+        self
+    }
+
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+}
+
 #[allow(async_fn_in_trait)]
-pub trait WebSocket: Sized + Send + Sync {
+pub trait WebSocket: Send + Sync {
     type Stream: AsyncReadExt + AsyncWriteExt + Unpin;
     async fn stream_mut(&self) -> impl DerefMut<Target = Self::Stream>;
     async fn state(&self) -> impl Deref<Target = WebSocketState>;
     async fn state_mut(&self) -> impl DerefMut<Target = WebSocketState>;
 
-    async fn on_message(&mut self, message: Vec<u8>) -> Result<()>;
-    async fn on_close(&mut self, reason: Vec<u8>) -> Result<()>;
-    async fn on_pong(&mut self, delay: Duration) -> Result<()>;
+    async fn on_message(&mut self, message: Vec<u8>) -> Result<()> {
+        let _ = message;
+        Ok(())
+    }
 
+    async fn on_close(&mut self, reason: Vec<u8>) -> Result<()> {
+        let _ = reason;
+        Ok(())
+    }
+
+    async fn on_pong(&mut self, delay: Duration) -> Result<()> {
+        let _ = delay;
+        Ok(())
+    }
+}
+
+#[allow(async_fn_in_trait)]
+pub trait WebSocketExt: WebSocket {
     async fn send_packet(&mut self, packet: Packet) -> Result<()> {
         send_packet(self.stream_mut().await, packet, self.state().await.mask).await
     }
@@ -221,3 +247,5 @@ pub trait WebSocket: Sized + Send + Sync {
         }
     }
 }
+
+impl<T: WebSocket> WebSocketExt for T {}

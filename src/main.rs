@@ -1,6 +1,6 @@
 use cliud::compress::try_compress;
 use cliud::http::{escape, Request, Response};
-use cliud::websocket::{Result, WebSocket, WebSocketState};
+use cliud::websocket::{Result, WebSocket, WebSocketExt, WebSocketState};
 use colored::*;
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
@@ -67,7 +67,7 @@ async fn handle_connection(mut stream: TcpStream, address: SocketAddr) -> Result
         if upgarde == "websocket" {
             EchoWebSocket {
                 stream: Mutex::new(stream),
-                state: RwLock::new(WebSocketState::default()),
+                state: RwLock::new(WebSocketState::default().timeout(Duration::from_secs(1))),
                 address,
             }
             .run()
