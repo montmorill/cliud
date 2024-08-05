@@ -202,12 +202,12 @@ pub trait WebSocketExt: WebSocket {
         self.send_packet((Opcode::Binary, data)).await
     }
 
-    async fn close(&mut self, reason: String) -> Result<()> {
+    async fn send_close(&mut self, reason: String) -> Result<()> {
         self.state_mut().await.half_closed = true;
         self.send_packet((Opcode::Close, reason.into())).await
     }
 
-    async fn ping(&mut self) -> Result<()> {
+    async fn send_ping(&mut self) -> Result<()> {
         self.state_mut().await.last_ping_time = Instant::now();
         self.state_mut().await.waiting_pong = true;
         self.send_packet((Opcode::Ping, Vec::new())).await
@@ -223,7 +223,7 @@ pub trait WebSocketExt: WebSocket {
                     if self.state().await.waiting_pong {
                         return Err(Error::PongTimeout);
                     }
-                    self.ping().await?;
+                    self.send_ping().await?;
                     continue;
                 }
             };
