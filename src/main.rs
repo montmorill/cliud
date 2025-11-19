@@ -1,9 +1,9 @@
 use cliud::compress::try_compress;
-use cliud::http::{escape, Request, Response};
+use cliud::http::{Request, Response};
 use cliud::websocket::{Result, WebSocket, WebSocketExt, WebSocketState};
-use colored::*;
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::fs;
 use tokio::io::{AsyncWriteExt, BufReader};
@@ -22,9 +22,43 @@ async fn main() -> std::io::Result<()> {
     }
 }
 
-async fn handle_connection(mut stream: TcpStream, address: SocketAddr) -> Result<()> {
+async fn handle_connection(mut stream: TcpStream, address: SocketAddr) -> Result::<(), Box<dyn std::error::Error>> {
+    let mut result = Ok(());
+
     let request = Request::from_buf_async(BufReader::new(&mut stream)).await?;
-    let mut response = handle_request(&request).await;
+
+    let mut response = if let Some(upgrade) = request.headers.get("Upgrade")
+        && upgrade == "websocket"
+    {
+        use base64::prelude::*;
+        use sha1_smol::Sha1;
+
+        if let Some(key) = request.headers.get("Sec-WebSocket-Key") {
+            let concated = [key, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"].concat();
+            let hashed = Sha1::from(concated).digest().bytes();
+            let encoded = BASE64_STANDARD.encode(hashed);
+
+            Response::new(101, "Switching Protocols")
+                .header("Upgrade", "websocket")
+                .header("Connection", "Upgrade")
+                .header("Sec-Websocket-Accept", encoded)
+                .header("Sec-Websocket-Version", "13")
+        } else {
+            Response::new(400, "Bad Request")
+        }
+    } else {
+        match handle_request(&request).await {
+            Ok(resp) => resp,
+            Err(err) => {
+                let body = format!("{err}");
+                result = Err(err);
+                let mut resp = Response::plain(&body);
+                resp.status_code = "500".to_string();
+                resp.description = "Internal Server Error".into();
+                resp
+            }
+        }
+    };
 
     // compress
     if !response.body.is_empty() {
@@ -47,21 +81,24 @@ async fn handle_connection(mut stream: TcpStream, address: SocketAddr) -> Result
     stream.write_all(&response.to_bytes()).await?;
     stream.flush().await?;
 
-    eprintln!(
-        r#"{} - "{}" - {}"#,
-        address,
-        request.request_line().bright_cyan(),
-        response.response_line()[9..].color(
-            match response.status_code.to_string().chars().next() {
-                Some('1') => "cyan",
-                Some('2') => "green",
-                Some('3') => "yellow",
-                Some('4') => "red",
-                Some('5') => "purple",
-                _ => "normal",
-            }
-        ),
-    );
+    {
+        use colored::*;
+        eprintln!(
+            r#"{} - "{}" - {}"#,
+            address,
+            request.request_line().bright_cyan(),
+            response.response_line()[9..].color(
+                match response.status_code.to_string().chars().next() {
+                    Some('1') => "cyan",
+                    Some('2') => "green",
+                    Some('3') => "yellow",
+                    Some('4') => "red",
+                    Some('5') => "purple",
+                    _ => "normal",
+                }
+            ),
+        );
+    }
 
     if let Some(upgarde) = response.headers.get("Upgrade") {
         if upgarde == "websocket" {
@@ -75,82 +112,116 @@ async fn handle_connection(mut stream: TcpStream, address: SocketAddr) -> Result
         }
     }
 
-    Ok(())
+    result.map_err(|err| err.into())
 }
 
-pub async fn handle_request(request: &Request) -> Response {
-    if let Some(upgrade) = request.headers.get("Upgrade") {
-        if upgrade == "websocket" {
-            use base64::prelude::*;
-            use sha1_smol::Sha1;
-
-            if let Some(key) = request.headers.get("Sec-WebSocket-Key") {
-                let concated = [key, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"].concat();
-                let hashed = Sha1::from(concated).digest().bytes();
-                let encoded = BASE64_STANDARD.encode(hashed);
-
-                return Response::new(101, "Switching Protocols")
-                    .header("Upgrade", "websocket")
-                    .header("Connection", "Upgrade")
-                    .header("Sec-Websocket-Accept", encoded)
-                    .header("Sec-Websocket-Version", "13");
-            } else {
-                return Response::new(400, "Bad Request");
-            };
-        }
-    }
-
+pub async fn handle_request(request: &Request) -> Result<Response> {
     // (index)
-    if request.target == "/" {
-        return Response::plain(200, "OK").body(b"Hello, world!");
+    let response = if request.target == "/" {
+        Response::plain(b"Hello, world!")
     }
     // /chat
     else if request.target == "/chat" {
-        return Response::html(200, "OK").body(&include_bytes!("../chat.html"));
+        Response::html(&fs::read("./chat.html").await?)
     }
     // /echo/{content}
     else if let Some(content) = request.target.strip_prefix("/echo/") {
-        return Response::plain(200, "OK").body(&content);
+        Response::plain(&content)
     }
     // /cat/{status_code}/{description}/{body}
     else if let Some(path) = request.target.strip_prefix("/cat/") {
-        let path = escape(path.to_owned());
         let mut splited = path.split('/');
-        let status_code = splited.next().unwrap_or("404");
-        let description = splited.next().unwrap_or("Not Found");
-        let body = splited.collect::<Vec<_>>().join("/");
-        return Response::new(status_code, description).body(&body);
+        let (status_code, description, body) = (|| {
+            let status_code = splited.next()?;
+            let description = splited.next()?;
+            let body: String = splited.collect::<Vec<_>>().join("/");
+            Some((status_code, description, body))
+        })()
+        .unwrap_or_else(|| ("400", "Bad Request", String::new()));
+        Response::new(status_code, description).body(&body)
     }
     // /user-agent
     else if request.target == "/user-agent" {
-        if let Some(user_agent) = request.headers.get("User-Agent") {
-            return Response::plain(200, "OK").body(user_agent);
+        match request.headers.get("User-Agent") {
+            Some(user_agent) => Response::plain(user_agent),
+            None => Response::plain(b"User-Agent not found!"),
         }
     }
-    // /files/filename
-    else if let Some(filename) = request.target.strip_prefix("/files/") {
-        let directory = std::env::args().nth(2).unwrap_or("./".to_string());
-        let path = format!("{directory}/{filename}");
-        return match request.method.as_str() {
-            "GET" => match fs::read(path).await {
-                Ok(content) => Response::plain(200, "OK").body(&content),
-                Err(_) => Response::new(404, "Not Found"),
-            },
-            "POST" => match fs::write(path, &request.body).await {
-                Ok(_) => Response::new(201, "Created"),
-                Err(_) => Response::new(500, "Internal Server Error"),
-            },
+    // /files/{filepath}
+    else if let Some(filepath) = request.target.strip_prefix("/files/") {
+        let path = PathBuf::from_iter(["./", filepath]);
+        match request.method.as_str() {
+            "GET" => {
+                if path.is_file() {
+                    Response::plain(&fs::read(path).await?)
+                } else if path.is_dir()
+                    && let Ok(mut entries) = fs::read_dir(&path).await
+                {
+                    let mut resp = Response::html(b"<ul>");
+                    resp.body.extend(
+                        format!(
+                            "<li><a href=\"/files/{}\">./</a></li>\n",
+                            path.to_str().unwrap()
+                        )
+                        .as_bytes(),
+                    );
+                    if let Some(parent) = path.parent() {
+                        resp.body.extend(
+                            format!(
+                                "<li><a href=\"/files/{}\">../</a></li>\n",
+                                parent.to_str().unwrap()
+                            )
+                            .as_bytes(),
+                        );
+                    }
+                    while let Some(entry) = entries.next_entry().await? {
+                        resp.body.extend(
+                            format!(
+                                "<li><a href=\"/files/{}\">{}{}</a></li>\n",
+                                {
+                                    let path = path
+                                        .join(entry.file_name())
+                                        .into_os_string()
+                                        .into_string()
+                                        .unwrap();
+                                    match path.strip_prefix("./") {
+                                        Some(path) => path.to_owned(),
+                                        None => path,
+                                    }
+                                },
+                                entry.file_name().into_string().unwrap(),
+                                if entry.file_type().await?.is_dir() {
+                                    "/"
+                                } else {
+                                    ""
+                                },
+                            )
+                            .as_bytes(),
+                        );
+                    }
+                    resp.body.extend(b"</ul>");
+                    resp
+                } else {
+                    Response::new(404, "Not Found")
+                }
+            }
+            "POST" => {
+                fs::write(path, &request.body).await?;
+                Response::new(201, "Created")
+            }
             _ => Response::new(501, "Not Implemented"),
-        };
-    }
+        }
+    } else {
+        Response::new(404, "Not Found")
+    };
 
-    Response::new(404, "Not Found")
+    Ok(response)
 }
 
 struct EchoWebSocket {
     stream: Mutex<TcpStream>,
-    state: RwLock<WebSocketState>,
     address: SocketAddr,
+    state: RwLock<WebSocketState>,
 }
 
 impl WebSocket for EchoWebSocket {
@@ -158,14 +229,6 @@ impl WebSocket for EchoWebSocket {
 
     async fn stream_mut(&self) -> impl DerefMut<Target = Self::Stream> {
         self.stream.lock().await
-    }
-
-    async fn state(&self) -> impl Deref<Target = WebSocketState> {
-        self.state.read().await
-    }
-
-    async fn state_mut(&self) -> impl DerefMut<Target = WebSocketState> {
-        self.state.write().await
     }
 
     async fn on_message(&mut self, message: Vec<u8>) -> Result<()> {
@@ -182,5 +245,13 @@ impl WebSocket for EchoWebSocket {
     async fn on_pong(&mut self, delay: Duration) -> Result<()> {
         eprintln!("receive pong from {} in {delay:?}", self.address);
         Ok(())
+    }
+
+    async fn state(&self) -> impl Deref<Target = WebSocketState> {
+        self.state.read().await
+    }
+
+    async fn state_mut(&self) -> impl DerefMut<Target = WebSocketState> {
+        self.state.write().await
     }
 }

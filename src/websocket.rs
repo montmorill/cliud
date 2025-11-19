@@ -5,7 +5,7 @@ use tokio::time;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Io error: {0}")]
+    #[error("IO Error: {0}")]
     IO(#[from] std::io::Error),
     #[error("Invalid opcode: {0}")]
     InvalidOpcode(u8),
@@ -14,7 +14,7 @@ pub enum Error {
     #[error("Pong timeout")]
     PongTimeout,
 }
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub type Packet = (Opcode, Vec<u8>);
 

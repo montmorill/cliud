@@ -2,10 +2,6 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 
-pub fn escape(raw: String) -> String {
-    raw.replace("%20", " ")
-}
-
 async fn read_line(stream: &mut (impl AsyncBufReadExt + Unpin)) -> std::io::Result<String> {
     let mut buf = String::new();
     loop {
@@ -35,7 +31,10 @@ impl Request {
         let request_line = read_line(&mut stream).await?;
         let mut splited = request_line.split(" ").into_iter();
         let method = splited.next().unwrap().into();
-        let target = splited.next().unwrap().into();
+        let target = percent_encoding::percent_decode_str(splited.next().unwrap())
+            .decode_utf8()
+            .unwrap()
+            .to_string();
         let version = splited.next().unwrap().into();
 
         let mut headers: HashMap<String, String> = HashMap::new();
@@ -86,18 +85,6 @@ impl Response {
         }
     }
 
-    pub fn plain(status_code: impl ToString, description: impl ToString) -> Self {
-        Self::new(status_code, description).header("Content-Type", "text/plain")
-    }
-
-    pub fn file(status_code: impl ToString, description: impl ToString) -> Self {
-        Self::new(status_code, description).header("Content-Type", "application/octet-stream")
-    }
-
-    pub fn html(status_code: impl ToString, description: impl ToString) -> Self {
-        Self::new(status_code, description).header("Content-Type", "text/html")
-    }
-
     pub fn header(mut self, key: impl ToString, value: impl ToString) -> Self {
         self.headers.insert(key.to_string(), value.to_string());
         self
@@ -125,6 +112,24 @@ impl Response {
         bytes.extend(b"\r\n");
         bytes.extend(&self.body);
         bytes
+    }
+
+    pub fn plain(body: &impl AsRef<[u8]>) -> Self {
+        Self::new(200, "OK")
+            .header("Content-Type", "text/plain; charset=utf-8")
+            .body(body)
+    }
+
+    pub fn file(body: &impl AsRef<[u8]>) -> Self {
+        Self::new(200, "OK")
+            .header("Content-Type", "application/octet-stream; charset=utf-8")
+            .body(body)
+    }
+
+    pub fn html(body: &impl AsRef<[u8]>) -> Self {
+        Self::new(200, "OK")
+            .header("Content-Type", "text/html; charset=utf-8")
+            .body(body)
     }
 }
 
