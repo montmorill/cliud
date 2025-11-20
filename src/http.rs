@@ -114,21 +114,22 @@ impl Response {
         bytes
     }
 
-    pub fn plain(body: &impl AsRef<[u8]>) -> Self {
+    pub fn ok() -> Self {
         Self::new(200, "OK")
-            .header("Content-Type", "text/plain; charset=utf-8")
+    }
+
+    pub fn plain(self, body: &impl AsRef<[u8]>) -> Self {
+        self.header("Content-Type", "text/plain; charset=utf-8")
             .body(body)
     }
 
-    pub fn file(body: &impl AsRef<[u8]>) -> Self {
-        Self::new(200, "OK")
-            .header("Content-Type", "application/octet-stream; charset=utf-8")
+    pub fn file(self, body: &impl AsRef<[u8]>) -> Self {
+        self.header("Content-Type", "application/octet-stream; charset=utf-8")
             .body(body)
     }
 
-    pub fn html(body: &impl AsRef<[u8]>) -> Self {
-        Self::new(200, "OK")
-            .header("Content-Type", "text/html; charset=utf-8")
+    pub fn html(self, body: &impl AsRef<[u8]>) -> Self {
+        self.header("Content-Type", "text/html; charset=utf-8")
             .body(body)
     }
 }

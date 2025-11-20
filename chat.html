@@ -11,11 +11,11 @@
         display: block;
       }
     </style>
-    <form class="container" disabled>
-      <input id="input" autocomplete="off">
+    <div class="container">
+      <input id="input" type="text" placeholder="Type your message...">
       <button id="send" type="button">Send</button>
-      <output id="log" disabled></output >
-    </form>
+      <output id="log" disabled></output>
+    </div>
     <script>
       let ws = new WebSocket("ws://127.0.0.1:4221/");
 
@@ -23,18 +23,25 @@
         document.getElementById("log").innerText += data.join(" ") + "\n";
       }
 
-      ws.onopen  = function ()    { log("Connected successfully."); };
-      ws.onclose = function ()    { log("Connection Closed."); };
-      ws.onerror = function (err) { log("Error occurred:", err); };
-      ws.onmessage = function (evt) {
-          let response = evt.data;
-          response.text().then(function (text) {
-            log("Received:", text);
-          });
+      ws.onopen = function () { log("Connected successfully."); };
+      ws.onclose = function () { log("Connection Closed."); };
+      ws.onerror = function (error) { log("Error occurred:", error); };
+      ws.onmessage = function (event) {
+        let response = event.data;
+        response.text().then(function (text) {
+          log("Received:", text);
+        });
       };
+
+      document.addEventListener("keypress", function (event) {
+        if (event.key === "Enter") {
+          document.getElementById("send").click();
+        }
+      })
 
       document.getElementById("send").onclick = function () {
         let content = document.getElementById("input").value;
+        document.getElementById("input").value = "";
         log("Sending:", content);
         ws.send(content);
       }

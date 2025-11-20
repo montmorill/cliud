@@ -22,10 +22,51 @@ async fn main() -> std::io::Result<()> {
     }
 }
 
-async fn handle_connection(mut stream: TcpStream, address: SocketAddr) -> Result::<(), Box<dyn std::error::Error>> {
-    let mut result = Ok(());
+async fn handle_connection(
+    mut stream: TcpStream,
+    address: SocketAddr,
+) -> Result<(), Box<dyn std::error::Error>> {
+    loop {
+        let request = Request::from_buf_async(BufReader::new(&mut stream)).await?;
+        let response = handle_request(&request).await?;
 
-    let request = Request::from_buf_async(BufReader::new(&mut stream)).await?;
+        stream.write_all(&response.to_bytes()).await?;
+        stream.flush().await?;
+
+        {
+            use colored::*;
+            eprintln!(
+                r#"{} - "{}" - {}"#,
+                address,
+                request.request_line().bright_cyan(),
+                response.response_line()[9..].color(
+                    match response.status_code.to_string().chars().next() {
+                        Some('1') => "cyan",
+                        Some('2') => "green",
+                        Some('3') => "yellow",
+                        Some('4') => "red",
+                        Some('5') => "purple",
+                        _ => "normal",
+                    }
+                ),
+            );
+        }
+        if let Some(upgarde) = response.headers.get("Upgrade") {
+            if upgarde == "websocket" {
+                EchoWebSocket {
+                    stream: Mutex::new(&mut stream),
+                    state: RwLock::new(WebSocketState::default()),
+                    address,
+                }
+                .run()
+                .await?;
+            }
+        }
+    }
+}
+
+async fn handle_request(request: &Request) -> Result<Response> {
+    let mut result = Ok(());
 
     let mut response = if let Some(upgrade) = request.headers.get("Upgrade")
         && upgrade == "websocket"
@@ -47,28 +88,25 @@ async fn handle_connection(mut stream: TcpStream, address: SocketAddr) -> Result
             Response::new(400, "Bad Request")
         }
     } else {
-        match handle_request(&request).await {
+        match router(&request).await {
             Ok(resp) => resp,
             Err(err) => {
                 let body = format!("{err}");
                 result = Err(err);
-                let mut resp = Response::plain(&body);
-                resp.status_code = "500".to_string();
-                resp.description = "Internal Server Error".into();
-                resp
+                Response::new(500, "Internal Server Error").plain(&body)
             }
         }
     };
 
     // compress
-    if !response.body.is_empty() {
-        if let Some(encodings) = request.headers.get("Accept-Encoding") {
-            for encoding in encodings.split(",").map(str::trim) {
-                if let Some(compressed) = try_compress(encoding, &response.body)? {
-                    response = response.header("Content-Encoding", encoding);
-                    response.body = compressed;
-                    break;
-                }
+    if !response.body.is_empty()
+        && let Some(encodings) = request.headers.get("Accept-Encoding")
+    {
+        for encoding in encodings.split(",").map(str::trim) {
+            if let Some(compressed) = try_compress(encoding, &response.body)? {
+                response = response.header("Content-Encoding", encoding);
+                response.body = compressed;
+                break;
             }
         }
     }
@@ -78,55 +116,24 @@ async fn handle_connection(mut stream: TcpStream, address: SocketAddr) -> Result
         response = response.header("Content-Length", length);
     }
 
-    stream.write_all(&response.to_bytes()).await?;
-    stream.flush().await?;
-
-    {
-        use colored::*;
-        eprintln!(
-            r#"{} - "{}" - {}"#,
-            address,
-            request.request_line().bright_cyan(),
-            response.response_line()[9..].color(
-                match response.status_code.to_string().chars().next() {
-                    Some('1') => "cyan",
-                    Some('2') => "green",
-                    Some('3') => "yellow",
-                    Some('4') => "red",
-                    Some('5') => "purple",
-                    _ => "normal",
-                }
-            ),
-        );
+    match result {
+        Ok(()) => Ok(response),
+        Err(err) => Err(err.into()),
     }
-
-    if let Some(upgarde) = response.headers.get("Upgrade") {
-        if upgarde == "websocket" {
-            EchoWebSocket {
-                stream: Mutex::new(stream),
-                state: RwLock::new(WebSocketState::default().timeout(Duration::from_secs(1))),
-                address,
-            }
-            .run()
-            .await?;
-        }
-    }
-
-    result.map_err(|err| err.into())
 }
 
-pub async fn handle_request(request: &Request) -> Result<Response> {
+pub async fn router(request: &Request) -> Result<Response> {
     // (index)
-    let response = if request.target == "/" {
-        Response::plain(b"Hello, world!")
+    Ok(if request.target == "/" {
+        Response::ok().plain(b"Hello, world!")
     }
     // /chat
     else if request.target == "/chat" {
-        Response::html(&fs::read("./chat.html").await?)
+        Response::ok().html(&fs::read("./chat.html").await?)
     }
     // /echo/{content}
     else if let Some(content) = request.target.strip_prefix("/echo/") {
-        Response::plain(&content)
+        Response::ok().plain(&content)
     }
     // /cat/{status_code}/{description}/{body}
     else if let Some(path) = request.target.strip_prefix("/cat/") {
@@ -143,8 +150,8 @@ pub async fn handle_request(request: &Request) -> Result<Response> {
     // /user-agent
     else if request.target == "/user-agent" {
         match request.headers.get("User-Agent") {
-            Some(user_agent) => Response::plain(user_agent),
-            None => Response::plain(b"User-Agent not found!"),
+            Some(user_agent) => Response::ok().plain(user_agent),
+            None => Response::ok().plain(b"User-Agent not found!"),
         }
     }
     // /files/{filepath}
@@ -153,11 +160,11 @@ pub async fn handle_request(request: &Request) -> Result<Response> {
         match request.method.as_str() {
             "GET" => {
                 if path.is_file() {
-                    Response::plain(&fs::read(path).await?)
+                    Response::ok().plain(&fs::read(path).await?)
                 } else if path.is_dir()
                     && let Ok(mut entries) = fs::read_dir(&path).await
                 {
-                    let mut resp = Response::html(b"<ul>");
+                    let mut resp = Response::ok().html(b"<ul>");
                     resp.body.extend(
                         format!(
                             "<li><a href=\"/files/{}\">./</a></li>\n",
@@ -213,19 +220,17 @@ pub async fn handle_request(request: &Request) -> Result<Response> {
         }
     } else {
         Response::new(404, "Not Found")
-    };
-
-    Ok(response)
+    })
 }
 
-struct EchoWebSocket {
-    stream: Mutex<TcpStream>,
+struct EchoWebSocket<'a> {
+    stream: Mutex<&'a mut TcpStream>,
     address: SocketAddr,
     state: RwLock<WebSocketState>,
 }
 
-impl WebSocket for EchoWebSocket {
-    type Stream = TcpStream;
+impl<'a> WebSocket for EchoWebSocket<'a> {
+    type Stream = &'a mut TcpStream;
 
     async fn stream_mut(&self) -> impl DerefMut<Target = Self::Stream> {
         self.stream.lock().await
