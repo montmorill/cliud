@@ -1,3 +1,5 @@
+#![allow(async_fn_in_trait)]
+
 use std::ops::{Deref, DerefMut};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -7,13 +9,14 @@ use tokio::time;
 pub enum Error {
     #[error("IO Error: {0}")]
     IO(#[from] std::io::Error),
-    #[error("Invalid opcode: {0}")]
+    #[error("Invalid Opcode: {0}")]
     InvalidOpcode(u8),
-    #[error("Bad protocol")]
+    #[error("Bad Protocol")]
     BadProtocol,
-    #[error("Pong timeout")]
+    #[error("Pong Timeout")]
     PongTimeout,
 }
+
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub type Packet = (Opcode, Vec<u8>);
@@ -21,7 +24,7 @@ pub type Packet = (Opcode, Vec<u8>);
 #[repr(u8)]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub enum Opcode {
-    Continue = 0,
+    Continuation = 0,
     Text = 1,
     Binary = 2,
     Close = 8,
@@ -29,12 +32,18 @@ pub enum Opcode {
     Pong = 10,
 }
 
+impl Opcode {
+    pub fn is_control(self) -> bool {
+        self >= Self::Close
+    }
+}
+
 impl TryFrom<u8> for Opcode {
     type Error = Error;
 
     fn try_from(value: u8) -> Result<Self> {
         match value {
-            0 => Ok(Opcode::Continue),
+            0 => Ok(Opcode::Continuation),
             1 => Ok(Opcode::Text),
             2 => Ok(Opcode::Binary),
             8 => Ok(Opcode::Close),
@@ -51,7 +60,7 @@ async fn receive_packet(
     let mut mask = [0u8; 4];
     let mut data = Vec::new();
     let mut buf = Vec::new();
-    let mut opcode = Opcode::Continue;
+    let mut opcode = Opcode::Continuation;
     loop {
         let head = stream.read_u16().await?;
         let finish = head & 0x8000 != 0;
@@ -60,12 +69,12 @@ async fn receive_packet(
         let payload_len = (head & 0x007f) as u8; // u7 actually
 
         let code = Opcode::try_from(code)?;
-        if code >= Opcode::Close && payload_len >= 0x7e {
+        if code.is_control() && (payload_len >= 0x7e || !finish) {
             return Err(Error::BadProtocol);
         }
-        match (&opcode, &code) {
-            (Opcode::Continue, _) if code != Opcode::Continue => opcode = code,
-            (_, Opcode::Continue) if opcode != Opcode::Continue => {}
+        match (opcode == Opcode::Continuation, code == Opcode::Continuation) {
+            (false, true) => {}
+            (true, false) => opcode = code,
             _ => return Err(Error::BadProtocol),
         }
 
@@ -85,6 +94,7 @@ async fn receive_packet(
             }
         }
         data.extend(&buf);
+
         if finish {
             return Ok((opcode, data));
         }
@@ -165,11 +175,13 @@ impl WebSocketState {
     }
 }
 
-#[allow(async_fn_in_trait)]
 pub trait WebSocket: Send + Sync {
     type Stream: AsyncReadExt + AsyncWriteExt + Unpin;
+
     async fn stream_mut(&self) -> impl DerefMut<Target = Self::Stream>;
+
     async fn state(&self) -> impl Deref<Target = WebSocketState>;
+
     async fn state_mut(&self) -> impl DerefMut<Target = WebSocketState>;
 
     async fn on_message(&mut self, message: Vec<u8>) -> Result<()> {
@@ -188,7 +200,6 @@ pub trait WebSocket: Send + Sync {
     }
 }
 
-#[allow(async_fn_in_trait)]
 pub trait WebSocketExt: WebSocket {
     async fn send_packet(&mut self, packet: Packet) -> Result<()> {
         send_packet(self.stream_mut().await, packet, self.state().await.mask).await
@@ -215,9 +226,9 @@ pub trait WebSocketExt: WebSocket {
 
     async fn run(&mut self) -> Result<()> {
         loop {
-            let packet = receive_packet(self.stream_mut().await);
             let timeout = self.state().await.timeout;
-            let (opcode, data) = match time::timeout(timeout, packet).await {
+            let future = receive_packet(self.stream_mut().await);
+            let (opcode, data) = match time::timeout(timeout, future).await {
                 Ok(packet) => packet?,
                 Err(_) => {
                     if self.state().await.waiting_pong {
@@ -242,7 +253,7 @@ pub trait WebSocketExt: WebSocket {
                     let delay = Instant::now() - self.state().await.last_ping_time;
                     self.on_pong(delay).await?;
                 }
-                _ => unreachable!(),
+                Opcode::Continuation => unreachable!(),
             }
         }
     }
