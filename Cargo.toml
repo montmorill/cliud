@@ -5,9 +5,10 @@ edition = "2024"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
+async-trait = "0.1.89"
 thiserror = "1.0.63"
 colored = "2.1.0"
 flate2 = "1.1.5"
-sha1_smol = "1.0.1"
 base64 = "0.22.1"
+sha1_smol = "1.0.1"
 percent-encoding = "2.3.2"

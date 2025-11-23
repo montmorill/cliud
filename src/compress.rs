@@ -1,9 +1,13 @@
+use async_trait::async_trait;
+use flate2::Compression;
 use flate2::write::{DeflateDecoder, GzDecoder, ZlibDecoder};
 use flate2::write::{DeflateEncoder, GzEncoder, ZlibEncoder};
-use flate2::Compression;
-use std::io::{Result, Write};
+use std::io::Write;
 
-pub fn try_compress(encoding: &str, data: &[u8]) -> Result<Option<Vec<u8>>> {
+use crate::http::{Request, Response};
+use crate::middleware::{Middleware, Next};
+
+fn try_compress(encoding: &str, data: &[u8]) -> std::io::Result<Option<Vec<u8>>> {
     Ok(match encoding {
         "gzip" => {
             let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
@@ -24,7 +28,7 @@ pub fn try_compress(encoding: &str, data: &[u8]) -> Result<Option<Vec<u8>>> {
     })
 }
 
-pub fn try_decompress(encoding: &str, data: &[u8]) -> Result<Option<Vec<u8>>> {
+fn try_decompress(encoding: &str, data: &[u8]) -> std::io::Result<Option<Vec<u8>>> {
     Ok(match encoding {
         "gzip" => {
             let mut decoder = GzDecoder::new(Vec::new());
@@ -43,4 +47,35 @@ pub fn try_decompress(encoding: &str, data: &[u8]) -> Result<Option<Vec<u8>>> {
         }
         _ => None,
     })
+}
+
+pub struct CompressMiddleware;
+
+#[async_trait]
+impl<E: From<std::io::Error>> Middleware<E> for CompressMiddleware {
+    async fn call(&self, request: &mut Request, next: &dyn Next<E>) -> Result<Response, E> {
+        if let Some(encoding) = request.headers.get("Content-Encoding") {
+            if let Some(decompressed) = try_decompress(encoding, &request.body)? {
+                let length = decompressed.len().to_string();
+                request.body = decompressed;
+                request.headers.remove("Content-Encoding");
+                request.headers.insert("Content-Length".into(), length);
+            }
+        }
+
+        let response = next.call(request).await?;
+
+        if !response.body.is_empty()
+            && let Some(encodings) = request.headers.get("Accept-Encoding")
+        {
+            for encoding in encodings.split(",").map(str::trim) {
+                if let Some(compressed) = try_compress(encoding, &response.body)? {
+                    return Ok(response
+                        .header("Content-Encoding", encoding)
+                        .body(&compressed));
+                }
+            }
+        }
+        Ok(response)
+    }
 }

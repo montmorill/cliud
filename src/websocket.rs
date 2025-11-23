@@ -2,8 +2,13 @@
 
 use std::ops::{Deref, DerefMut};
 use std::time::{Duration, Instant};
+
+use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time;
+
+use crate::http::{Request, Response};
+use crate::middleware::{Middleware, Next};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -260,3 +265,33 @@ pub trait WebSocketExt: WebSocket {
 }
 
 impl<T: WebSocket> WebSocketExt for T {}
+
+pub struct WebSocketHandshakeMiddleware;
+
+#[async_trait]
+impl<E> Middleware<E> for WebSocketHandshakeMiddleware {
+    async fn call(&self, request: &mut Request, next: &dyn Next<E>) -> Result<Response, E> {
+        if let Some(upgrade) = request.headers.get("Upgrade")
+            && upgrade == "websocket"
+        {
+            if let Some(key) = request.headers.get("Sec-WebSocket-Key") {
+                use base64::prelude::*;
+                use sha1_smol::Sha1;
+
+                let concated = [key, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"].concat();
+                let hashed = Sha1::from(concated).digest().bytes();
+                let encoded = BASE64_STANDARD.encode(hashed);
+
+                Ok(Response::new(101, "Switching Protocols")
+                    .header("Upgrade", "websocket")
+                    .header("Connection", "Upgrade")
+                    .header("Sec-Websocket-Accept", encoded)
+                    .header("Sec-Websocket-Version", "13"))
+            } else {
+                Ok(Response::new(400, "Bad Request"))
+            }
+        } else {
+            next.call(request).await
+        }
+    }
+}
