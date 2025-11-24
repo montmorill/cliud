@@ -33,11 +33,66 @@ async fn main() -> std::io::Result<()> {
     }
 }
 
+async fn read_filepath(path: &PathBuf) -> std::io::Result<Response> {
+    Ok(if path.is_file() {
+        Response::ok().plain(fs::read(path).await?)
+    } else if path.is_dir()
+        && let Ok(mut entries) = fs::read_dir(&path).await
+    {
+        let mut resp = Response::ok().html(b"<ul>");
+        resp.body.extend(
+            format!(
+                "<li><a href=\"/files/{}\">./</a></li>\n",
+                path.to_str().unwrap()
+            )
+            .as_bytes(),
+        );
+        if let Some(parent) = path.parent() {
+            resp.body.extend(
+                format!(
+                    "<li><a href=\"/files/{}\">../</a></li>\n",
+                    parent.to_str().unwrap()
+                )
+                .as_bytes(),
+            );
+        }
+        while let Some(entry) = entries.next_entry().await? {
+            resp.body.extend(
+                format!(
+                    "<li><a href=\"/files/{}\">{}{}</a></li>\n",
+                    {
+                        let path = path
+                            .join(entry.file_name())
+                            .into_os_string()
+                            .into_string()
+                            .unwrap();
+                        match path.strip_prefix("./") {
+                            Some(path) => path.to_owned(),
+                            None => path,
+                        }
+                    },
+                    entry.file_name().into_string().unwrap(),
+                    if entry.file_type().await?.is_dir() {
+                        "/"
+                    } else {
+                        ""
+                    },
+                )
+                .as_bytes(),
+            );
+        }
+        resp.body.extend(b"</ul>");
+        resp
+    } else {
+        Response::new(404, "Not Found")
+    })
+}
+
 struct Router;
 
 #[async_trait]
 impl<E: From<std::io::Error>> Middleware<E> for Router {
-    async fn call(&self, request: & Request, next: &dyn Next<E>) -> Result<Response, E> {
+    async fn call(&self, request: &Request, next: &dyn Next<E>) -> Result<Response, E> {
         Ok(if request.target == "/" {
             Response::ok().plain(b"Hello, world!")
         }
@@ -59,12 +114,12 @@ impl<E: From<std::io::Error>> Middleware<E> for Router {
                 Some((status_code, description, body))
             })()
             .unwrap_or_else(|| ("400", "Bad Request", String::new()));
-            Response::new(status_code, description).with_body(body.as_bytes())
+            Response::new(status_code, description).with_body(body)
         }
         // /user-agent
         else if request.target == "/user-agent" {
             match request.headers.get("User-Agent") {
-                Some(user_agent) => Response::ok().plain(user_agent.as_bytes()),
+                Some(user_agent) => Response::ok().plain(user_agent.clone().into_bytes()),
                 None => Response::ok().plain(b"User-Agent not found!"),
             }
         }
@@ -73,58 +128,7 @@ impl<E: From<std::io::Error>> Middleware<E> for Router {
             let path = PathBuf::from_iter(["./", filepath]);
             match request.method.as_str() {
                 "GET" => {
-                    if path.is_file() {
-                        Response::ok().plain(fs::read(path).await?)
-                    } else if path.is_dir()
-                        && let Ok(mut entries) = fs::read_dir(&path).await
-                    {
-                        let mut resp = Response::ok().html(b"<ul>");
-                        resp.body.extend(
-                            format!(
-                                "<li><a href=\"/files/{}\">./</a></li>\n",
-                                path.to_str().unwrap()
-                            )
-                            .as_bytes(),
-                        );
-                        if let Some(parent) = path.parent() {
-                            resp.body.extend(
-                                format!(
-                                    "<li><a href=\"/files/{}\">../</a></li>\n",
-                                    parent.to_str().unwrap()
-                                )
-                                .as_bytes(),
-                            );
-                        }
-                        while let Some(entry) = entries.next_entry().await? {
-                            resp.body.extend(
-                                format!(
-                                    "<li><a href=\"/files/{}\">{}{}</a></li>\n",
-                                    {
-                                        let path = path
-                                            .join(entry.file_name())
-                                            .into_os_string()
-                                            .into_string()
-                                            .unwrap();
-                                        match path.strip_prefix("./") {
-                                            Some(path) => path.to_owned(),
-                                            None => path,
-                                        }
-                                    },
-                                    entry.file_name().into_string().unwrap(),
-                                    if entry.file_type().await?.is_dir() {
-                                        "/"
-                                    } else {
-                                        ""
-                                    },
-                                )
-                                .as_bytes(),
-                            );
-                        }
-                        resp.body.extend(b"</ul>");
-                        resp
-                    } else {
-                        Response::new(404, "Not Found")
-                    }
+                    read_filepath(&path).await?
                 }
                 "POST" => {
                     fs::write(path, &request.body).await?;
