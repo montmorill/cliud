@@ -22,12 +22,11 @@ async fn main() -> std::io::Result<()> {
 
     use cliud::websocket::WebSocketHandshakeMiddleware;
 
-    let server = Box::leak(Box::new(
-        Server::<Box<dyn std::error::Error + Send + Sync>, _>::default()
-            .middleware(WebSocketHandshakeMiddleware)
-            .service(EchoWebSocketService)
-            .middleware(Router),
-    ));
+    let server = Server::<Box<dyn std::error::Error + Send + Sync>, _>::default()
+        .middleware(WebSocketHandshakeMiddleware)
+        .service(EchoWebSocketService)
+        .middleware(Router)
+        .leak();
 
     loop {
         let (stream, address) = listener.accept().await?;

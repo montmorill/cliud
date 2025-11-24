@@ -30,6 +30,10 @@ impl<E, S> Server<E, S> {
         self
     }
 
+    pub fn leak(self) -> &'static Self {
+        Box::leak(Box::new(self))
+    }
+
     pub async fn handle_connection(
         &'static self,
         mut stream: S,
