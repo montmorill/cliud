@@ -40,7 +40,7 @@ impl<E, S> Server<E, S> {
         address: SocketAddr,
     ) -> Result<(), E>
     where
-        E: Send + From<std::io::Error>,
+        E: From<std::io::Error> + Send,
         S: AsyncReadExt + AsyncWriteExt + Unpin,
     {
         loop {
@@ -63,15 +63,11 @@ impl<E, S> Server<E, S> {
 
 impl<E, S> Default for Server<E, S>
 where
-    E: From<std::io::Error>,
     S: AsyncReadExt + AsyncWriteExt + Unpin,
 {
     fn default() -> Self {
-        use crate::compress::CompressMiddleware;
-        use crate::middleware::ContentLengthMiddleware;
-
         Self::new(Response::new(404, "Not Found"))
-            .middleware(ContentLengthMiddleware)
-            .middleware(CompressMiddleware)
+            .middleware(crate::middleware::ContentLengthMiddleware)
+            .service(crate::service::LoggerService)
     }
 }

@@ -270,7 +270,7 @@ pub struct WebSocketHandshakeMiddleware;
 
 #[async_trait]
 impl<E> Middleware<E> for WebSocketHandshakeMiddleware {
-    async fn call(&self, request: &mut Request, next: &dyn Next<E>) -> Result<Response, E> {
+    async fn call(&self, request: &Request, next: &dyn Next<E>) -> Result<Response, E> {
         if let Some(upgrade) = request.headers.get("Upgrade")
             && upgrade == "websocket"
         {

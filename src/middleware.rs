@@ -6,19 +6,19 @@ use crate::http::{Request, Response};
 
 #[async_trait]
 pub trait Next<E>: Send + Sync {
-    async fn call(&self, request: &mut Request) -> Result<Response, E>;
+    async fn call(&self, request: &Request) -> Result<Response, E>;
 }
 
 #[async_trait]
 impl<E> Next<E> for Response {
-    async fn call(&self, _request: &mut Request) -> Result<Response, E> {
+    async fn call(&self, _request: &Request) -> Result<Response, E> {
         Ok(self.clone())
     }
 }
 
 #[async_trait]
 pub trait Middleware<E>: Send + Sync {
-    async fn call(&self, request: &mut Request, next: &dyn Next<E>) -> Result<Response, E>;
+    async fn call(&self, request: &Request, next: &dyn Next<E>) -> Result<Response, E>;
 }
 
 pub struct MiddlewareNext<E> {
@@ -28,7 +28,7 @@ pub struct MiddlewareNext<E> {
 
 #[async_trait]
 impl<E: Send> Next<E> for MiddlewareNext<E> {
-    async fn call(&self, request: &mut Request) -> Result<Response, E> {
+    async fn call(&self, request: &Request) -> Result<Response, E> {
         self.middleware.call(request, &*self.next).await
     }
 }
@@ -53,7 +53,7 @@ impl<E> MiddlewareChain<E> {
 
 #[async_trait]
 impl<E: Send + 'static> Next<E> for MiddlewareChain<E> {
-    async fn call(&self, request: &mut Request) -> Result<Response, E> {
+    async fn call(&self, request: &Request) -> Result<Response, E> {
         let mut next: Arc<dyn Next<E>> = Arc::clone(&self.next);
         for middleware in self.middlewares.iter().rev() {
             let middleware = Arc::clone(middleware);
@@ -68,7 +68,7 @@ pub struct ContentLengthMiddleware;
 
 #[async_trait]
 impl<E> Middleware<E> for ContentLengthMiddleware {
-    async fn call(&self, request: &mut Request, next: &dyn Next<E>) -> Result<Response, E> {
+    async fn call(&self, request: &Request, next: &dyn Next<E>) -> Result<Response, E> {
         let response = next.call(request).await?;
         let length = response.body.len();
         if length != 0 {

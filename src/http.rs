@@ -90,8 +90,8 @@ impl Response {
         self
     }
 
-    pub fn body(mut self, body: &impl AsRef<[u8]>) -> Self {
-        self.body.extend(body.as_ref());
+    pub fn with_body(mut self, body: impl Into<Vec<u8>>) -> Self {
+        self.body = body.into();
         self
     }
 
@@ -118,19 +118,19 @@ impl Response {
         Self::new(200, "OK")
     }
 
-    pub fn plain(self, body: &impl AsRef<[u8]>) -> Self {
+    pub fn plain(self, body: impl Into<Vec<u8>>) -> Self {
         self.header("Content-Type", "text/plain; charset=utf-8")
-            .body(body)
+            .with_body(body)
     }
 
-    pub fn file(self, body: &impl AsRef<[u8]>) -> Self {
+    pub fn file(self, body: impl Into<Vec<u8>>) -> Self {
         self.header("Content-Type", "application/octet-stream; charset=utf-8")
-            .body(body)
+            .with_body(body)
     }
 
-    pub fn html(self, body: &impl AsRef<[u8]>) -> Self {
+    pub fn html(self, body: impl Into<Vec<u8>>) -> Self {
         self.header("Content-Type", "text/html; charset=utf-8")
-            .body(body)
+            .with_body(body)
     }
 }
 

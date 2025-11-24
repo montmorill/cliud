@@ -20,10 +20,9 @@ async fn main() -> std::io::Result<()> {
     let listener = TcpListener::bind(host).await?;
     println!("Listening on {host}...");
 
-    use cliud::websocket::WebSocketHandshakeMiddleware;
-
     let server = Server::<Box<dyn std::error::Error + Send + Sync>, _>::default()
-        .middleware(WebSocketHandshakeMiddleware)
+        .middleware(cliud::websocket::WebSocketHandshakeMiddleware)
+        .middleware(cliud::compress::CompressMiddleware { min_size: 1024 })
         .service(EchoWebSocketService)
         .middleware(Router)
         .leak();
@@ -38,17 +37,17 @@ struct Router;
 
 #[async_trait]
 impl<E: From<std::io::Error>> Middleware<E> for Router {
-    async fn call(&self, request: &mut Request, next: &dyn Next<E>) -> Result<Response, E> {
+    async fn call(&self, request: & Request, next: &dyn Next<E>) -> Result<Response, E> {
         Ok(if request.target == "/" {
             Response::ok().plain(b"Hello, world!")
         }
         // /chat
         else if request.target == "/chat" {
-            Response::ok().html(&fs::read("./chat.html").await?)
+            Response::ok().html(fs::read("./chat.html").await?)
         }
         // /echo/{content}
         else if let Some(content) = request.target.strip_prefix("/echo/") {
-            Response::ok().plain(&content)
+            Response::ok().plain(content)
         }
         // /cat/{status_code}/{description}/{body}
         else if let Some(path) = request.target.strip_prefix("/cat/") {
@@ -60,12 +59,12 @@ impl<E: From<std::io::Error>> Middleware<E> for Router {
                 Some((status_code, description, body))
             })()
             .unwrap_or_else(|| ("400", "Bad Request", String::new()));
-            Response::new(status_code, description).body(&body)
+            Response::new(status_code, description).with_body(body.as_bytes())
         }
         // /user-agent
         else if request.target == "/user-agent" {
             match request.headers.get("User-Agent") {
-                Some(user_agent) => Response::ok().plain(user_agent),
+                Some(user_agent) => Response::ok().plain(user_agent.as_bytes()),
                 None => Response::ok().plain(b"User-Agent not found!"),
             }
         }
@@ -75,7 +74,7 @@ impl<E: From<std::io::Error>> Middleware<E> for Router {
             match request.method.as_str() {
                 "GET" => {
                     if path.is_file() {
-                        Response::ok().plain(&fs::read(path).await?)
+                        Response::ok().plain(fs::read(path).await?)
                     } else if path.is_dir()
                         && let Ok(mut entries) = fs::read_dir(&path).await
                     {
