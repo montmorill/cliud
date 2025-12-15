@@ -11,6 +11,7 @@ dotenv = "0.15.0"
 async-trait = "0.1.89"
 thiserror = "1.0.63"
 colored = "2.1.0"
+smol_str = "0.3.4"
 
 # Coding
 flate2 = "1.1.5"

@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::io::Write as _;
+use std::io::{Error, Write as _};
 
 use async_trait::async_trait;
 use flate2::Compression;
@@ -8,7 +8,9 @@ use flate2::write::{DeflateDecoder, DeflateEncoder, GzDecoder, GzEncoder, ZlibDe
 use crate::http::{Request, Response};
 use crate::middleware::{Middleware, Next};
 
-fn try_compress(encoding: &str, data: &[u8]) -> std::io::Result<Option<Vec<u8>>> {
+type Result<T, E = Error> = std::result::Result<T, E>;
+
+fn try_compress(encoding: &str, data: &[u8]) -> Result<Option<Vec<u8>>> {
     Ok(match encoding {
         "gzip" => {
             let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
@@ -29,7 +31,7 @@ fn try_compress(encoding: &str, data: &[u8]) -> std::io::Result<Option<Vec<u8>>>
     })
 }
 
-fn try_decompress(encoding: &str, data: &[u8]) -> std::io::Result<Option<Vec<u8>>> {
+fn try_decompress(encoding: &str, data: &[u8]) -> Result<Option<Vec<u8>>> {
     Ok(match encoding {
         "gzip" => {
             let mut decoder = GzDecoder::new(Vec::new());
@@ -55,7 +57,7 @@ pub struct CompressMiddleware {
 }
 
 #[async_trait]
-impl<E: From<std::io::Error>> Middleware<E> for CompressMiddleware {
+impl<E: From<Error>> Middleware<E> for CompressMiddleware {
     #[inline]
     async fn call(&self, request: &Request, next: &dyn Next<E>) -> Result<Response, E> {
         let mut request = Cow::Borrowed(request);
@@ -67,7 +69,7 @@ impl<E: From<std::io::Error>> Middleware<E> for CompressMiddleware {
             let mut owned = request.into_owned();
             owned.body = decompressed;
             owned.headers.remove("Content-Encoding");
-            owned.headers.insert("Content-Length".into(), length);
+            owned.headers.insert("Content-Length", length);
             request = Cow::Owned(owned);
         }
 

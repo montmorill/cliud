@@ -1,5 +1,3 @@
-#![warn(clippy::unwrap_used)]
-
 use std::env::var;
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
@@ -130,7 +128,7 @@ impl<E: From<std::io::Error>> Middleware<E> for RouterMiddleware {
         // /user-agent
         else if request.target == "/user-agent" {
             match request.headers.get("User-Agent") {
-                Some(user_agent) => Response::ok().plain(user_agent.clone().into_bytes()),
+                Some(user_agent) => Response::ok().plain(user_agent.as_bytes()),
                 None => Response::ok().plain(b"User-Agent not found!"),
             }
         }

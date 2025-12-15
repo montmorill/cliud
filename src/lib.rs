@@ -15,9 +15,11 @@
 #![allow(clippy::min_ident_chars, reason = "..")]
 #![allow(clippy::missing_docs_in_private_items, reason = "..")]
 #![allow(clippy::missing_trait_methods, reason = "..")]
+#![allow(clippy::mod_module_files, reason = "..")]
 #![allow(clippy::module_name_repetitions, reason = "..")]
 #![allow(clippy::print_stderr, reason = "..")]
 #![allow(clippy::print_stdout, reason = "..")]
+#![allow(clippy::pub_use, reason = "..")]
 #![allow(clippy::question_mark_used, reason = "..")]
 #![allow(clippy::separated_literal_suffix, reason = "..")]
 #![allow(clippy::shadow_reuse, reason = "..")]
@@ -34,4 +36,5 @@ pub mod server;
 pub mod service;
 pub mod websocket;
 
-pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
+use std::error::Error;
+pub type BoxError = Box<dyn Error + Send + Sync>;
