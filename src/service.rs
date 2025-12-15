@@ -24,6 +24,7 @@ pub struct LoggerService;
 
 #[async_trait]
 impl<E, S> Service<E, S> for LoggerService {
+    #[inline]
     async fn call(
         &self,
         request: &Request,
@@ -31,7 +32,7 @@ impl<E, S> Service<E, S> for LoggerService {
         address: &SocketAddr,
         _: &mut S,
     ) -> Result<ConnectionFlag, E> {
-        use colored::Colorize;
+        use colored::Colorize as _;
         eprintln!(
             r#"{} - "{}" - {}"#,
             address,

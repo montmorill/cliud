@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::io::Write;
+use std::io::Write as _;
 
 use async_trait::async_trait;
 use flate2::Compression;
@@ -57,18 +57,19 @@ pub struct CompressMiddleware {
 
 #[async_trait]
 impl<E: From<std::io::Error>> Middleware<E> for CompressMiddleware {
+    #[inline]
     async fn call(&self, request: &Request, next: &dyn Next<E>) -> Result<Response, E> {
         let mut request = Cow::Borrowed(request);
 
-        if let Some(encoding) = request.headers.get("Content-Encoding") {
-            if let Some(decompressed) = try_decompress(encoding, &request.body)? {
-                let length = decompressed.len().to_string();
-                let mut owned = request.into_owned();
-                owned.body = decompressed;
-                owned.headers.remove("Content-Encoding");
-                owned.headers.insert("Content-Length".into(), length);
-                request = Cow::Owned(owned);
-            }
+        if let Some(encoding) = request.headers.get("Content-Encoding")
+            && let Some(decompressed) = try_decompress(encoding, &request.body)?
+        {
+            let length = decompressed.len().to_string();
+            let mut owned = request.into_owned();
+            owned.body = decompressed;
+            owned.headers.remove("Content-Encoding");
+            owned.headers.insert("Content-Length".into(), length);
+            request = Cow::Owned(owned);
         }
 
         let mut response = next.call(&request).await?;

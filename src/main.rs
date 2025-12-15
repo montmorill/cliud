@@ -1,14 +1,15 @@
+use std::env::var;
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
-use std::time::Duration;
 
 use async_trait::async_trait;
+use cliud::BoxError;
 use cliud::http::{Request, Response};
 use cliud::middleware::{Middleware, Next};
 use cliud::server::Server;
 use cliud::service::{ConnectionFlag, Service};
-use cliud::websocket::{Result, WebSocket, WebSocketExt, WebSocketState};
+use cliud::websocket::{Result, WebSocket, WebSocketExt as _, WebSocketState};
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -16,20 +17,24 @@ use tokio::sync::{Mutex, RwLock};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let host = "127.0.0.1:4221";
-    let listener = TcpListener::bind(host).await?;
-    println!("Listening on {host}...");
+    let host = var("CLIUD_HOST").unwrap_or_else(|_| "127.0.0.1".to_owned());
+    let port = var("CLIUD_PORT")
+        .map(|s| s.parse::<u16>().unwrap())
+        .unwrap_or(4221);
+    let address = SocketAddr::new(host.parse().unwrap(), port);
+    let listener = TcpListener::bind(&address).await?;
+    println!("Listening on {address}");
 
-    let server = Server::<Box<dyn std::error::Error + Send + Sync>, _>::default()
+    let server = Server::<BoxError, _>::default()
         .middleware(cliud::websocket::WebSocketHandshakeMiddleware)
         .middleware(cliud::compress::CompressMiddleware { min_size: 1024 })
         .service(EchoWebSocketService)
-        .middleware(Router)
+        .middleware(RouterMiddleware)
         .leak();
 
     loop {
-        let (stream, address) = listener.accept().await?;
-        tokio::spawn(server.handle_connection(stream, address));
+        let (stream, addr) = listener.accept().await?;
+        tokio::spawn(server.handle_connection(stream, addr));
     }
 }
 
@@ -88,11 +93,15 @@ async fn read_filepath(path: &PathBuf) -> std::io::Result<Response> {
     })
 }
 
-struct Router;
+struct RouterMiddleware;
 
 #[async_trait]
-impl<E: From<std::io::Error>> Middleware<E> for Router {
-    async fn call(&self, request: &Request, next: &dyn Next<E>) -> Result<Response, E> {
+impl<E: From<std::io::Error>> Middleware<E> for RouterMiddleware {
+    async fn call(
+        &self,
+        request: &Request,
+        next: &dyn Next<E>,
+    ) -> Result<Response, E> {
         Ok(if request.target == "/" {
             Response::ok().plain(b"Hello, world!")
         }
@@ -119,7 +128,9 @@ impl<E: From<std::io::Error>> Middleware<E> for Router {
         // /user-agent
         else if request.target == "/user-agent" {
             match request.headers.get("User-Agent") {
-                Some(user_agent) => Response::ok().plain(user_agent.clone().into_bytes()),
+                Some(user_agent) => {
+                    Response::ok().plain(user_agent.clone().into_bytes())
+                }
                 None => Response::ok().plain(b"User-Agent not found!"),
             }
         }
@@ -127,9 +138,7 @@ impl<E: From<std::io::Error>> Middleware<E> for Router {
         else if let Some(filepath) = request.target.strip_prefix("/files/") {
             let path = PathBuf::from_iter(["./", filepath]);
             match request.method.as_str() {
-                "GET" => {
-                    read_filepath(&path).await?
-                }
+                "GET" => read_filepath(&path).await?,
                 "POST" => {
                     fs::write(path, &request.body).await?;
                     Response::new(201, "Created")
@@ -166,11 +175,6 @@ where
 
     async fn on_close(&mut self, reason: Vec<u8>) -> Result<()> {
         eprintln!("disconnected with {}: {reason:?}", self.address);
-        Ok(())
-    }
-
-    async fn on_pong(&mut self, delay: Duration) -> Result<()> {
-        eprintln!("receive pong from {} in {delay:?}", self.address);
         Ok(())
     }
 

@@ -6,26 +6,21 @@
     <title>Cliud Chat</title>
   </head>
   <body>
-    <style>
-      #log {
-        display: block;
-      }
-    </style>
     <div class="container">
       <input id="input" type="text" placeholder="Type your message...">
       <button id="send" type="button">Send</button>
-      <output id="log" disabled></output>
+      <div id="log" disabled></div>
     </div>
     <script>
-      let ws = new WebSocket("ws://127.0.0.1:4221/");
+      let ws = new WebSocket(`ws://${window.location.host}`);
 
       function log(...data) {
-        document.getElementById("log").innerText += data.join(" ") + "\n";
+        document.getElementById("log").innerHTML += `<div>${data.join(" ")}</div>`;
       }
 
       ws.onopen = function () { log("Connected successfully."); };
       ws.onclose = function () { log("Connection Closed."); };
-      ws.onerror = function (error) { log("Error occurred:", error); };
+      ws.onerror = function (error) { log("Error occurred:", JSON.stringify(error)); };
       ws.onmessage = function (event) {
         let response = event.data;
         response.text().then(function (text) {

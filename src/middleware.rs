@@ -11,6 +11,7 @@ pub trait Next<E>: Send + Sync {
 
 #[async_trait]
 impl<E> Next<E> for Response {
+    #[inline]
     async fn call(&self, _request: &Request) -> Result<Response, E> {
         Ok(self.clone())
     }
@@ -28,6 +29,7 @@ pub struct MiddlewareNext<E> {
 
 #[async_trait]
 impl<E: Send> Next<E> for MiddlewareNext<E> {
+    #[inline]
     async fn call(&self, request: &Request) -> Result<Response, E> {
         self.middleware.call(request, &*self.next).await
     }
@@ -39,6 +41,7 @@ pub struct MiddlewareChain<E> {
 }
 
 impl<E> MiddlewareChain<E> {
+    #[inline]
     pub fn new(next: impl Next<E> + 'static) -> Self {
         Self {
             middlewares: Vec::new(),
@@ -46,6 +49,7 @@ impl<E> MiddlewareChain<E> {
         }
     }
 
+    #[inline]
     pub fn push(&mut self, middleware: Arc<dyn Middleware<E>>) {
         self.middlewares.push(middleware);
     }
@@ -53,6 +57,7 @@ impl<E> MiddlewareChain<E> {
 
 #[async_trait]
 impl<E: Send + 'static> Next<E> for MiddlewareChain<E> {
+    #[inline]
     async fn call(&self, request: &Request) -> Result<Response, E> {
         let mut next: Arc<dyn Next<E>> = Arc::clone(&self.next);
         for middleware in self.middlewares.iter().rev() {
@@ -68,6 +73,7 @@ pub struct ContentLengthMiddleware;
 
 #[async_trait]
 impl<E> Middleware<E> for ContentLengthMiddleware {
+    #[inline]
     async fn call(&self, request: &Request, next: &dyn Next<E>) -> Result<Response, E> {
         let response = next.call(request).await?;
         let length = response.body.len();
