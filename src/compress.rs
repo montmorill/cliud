@@ -79,7 +79,7 @@ impl<E: From<std::io::Error>> Middleware<E> for CompressMiddleware {
             for encoding in encodings.split(",").map(str::trim) {
                 if let Some(compressed) = try_compress(encoding, &response.body)? {
                     response.body = compressed;
-                    return Ok(response.header("Content-Encoding", encoding));
+                    return Ok(response.with_header("Content-Encoding", encoding));
                 }
             }
         }

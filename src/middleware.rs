@@ -78,7 +78,7 @@ impl<E> Middleware<E> for ContentLengthMiddleware {
         let response = next.call(request).await?;
         let length = response.body.len();
         if length != 0 {
-            Ok(response.header("Content-Length", length))
+            Ok(response.with_header("Content-Length", length))
         } else {
             Ok(response)
         }

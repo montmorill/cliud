@@ -12,7 +12,7 @@ use cliud::middleware::{Middleware, Next};
 use cliud::server::Server;
 use cliud::service::{ConnectionFlag, Service};
 use cliud::websocket::{Result, WebSocket, WebSocketExt as _, WebSocketState};
-use tokio::fs;
+use tokio::fs::{read, read_dir, write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, RwLock};
@@ -43,17 +43,22 @@ async fn main() -> std::io::Result<()> {
     }
 }
 
-async fn read_filepath(path: &PathBuf) -> std::io::Result<Response> {
+fn invalid_utf8<T: std::fmt::Debug>(value: T) -> Response {
+    Response::err(format!("{value:?} is not valid utf-8"))
+}
+
+async fn read_filepath(path: &PathBuf) -> Result<Response, Response> {
     Ok(if path.is_file() {
-        Response::ok().plain(fs::read(path).await?)
+        Response::ok().plain(read(path).await?)
     } else if path.is_dir()
-        && let Ok(mut entries) = fs::read_dir(&path).await
+        && let Ok(mut entries) = read_dir(&path).await
     {
         let mut resp = Response::ok().html(b"<ul>");
         resp.body.extend(
             format!(
                 "<li><a href=\"/files/{}\">./</a></li>\n",
-                path.to_str().expect("path must be valid utf-8")
+                path.to_str()
+                    .ok_or_else(|| Response::err(format!("{path:?} is not valid utf-8")))?
             )
             .as_bytes(),
         );
@@ -61,12 +66,12 @@ async fn read_filepath(path: &PathBuf) -> std::io::Result<Response> {
             resp.body.extend(
                 format!(
                     "<li><a href=\"/files/{}\">../</a></li>\n",
-                    parent.to_str().expect("parent path must be valid utf-8")
+                    parent.to_str().ok_or_else(|| invalid_utf8(parent))?
                 )
                 .as_bytes(),
             );
         }
-        while let Some(entry) = entries.next_entry().await? {
+        while let Some(entry) = entries.next_entry().await.map_err(Response::err)? {
             resp.body.extend(
                 format!(
                     "<li><a href=\"/files/{}\">{}{}</a></li>\n",
@@ -75,13 +80,13 @@ async fn read_filepath(path: &PathBuf) -> std::io::Result<Response> {
                             .join(entry.file_name())
                             .into_os_string()
                             .into_string()
-                            .expect("file name must be valid utf-8");
+                            .map_err(invalid_utf8)?;
                         match path.strip_prefix("./") {
                             Some(path) => path.to_owned(),
                             None => path,
                         }
                     },
-                    entry.file_name().into_string().expect("file name must be valid utf-8"),
+                    entry.file_name().into_string().map_err(invalid_utf8)?,
                     if entry.file_type().await?.is_dir() { "/" } else { "" },
                 )
                 .as_bytes(),
@@ -104,7 +109,7 @@ impl<E: From<std::io::Error>> Middleware<E> for RouterMiddleware {
         }
         // /chat
         else if request.target == "/chat" {
-            Response::ok().html(fs::read("./chat.html").await?)
+            Response::ok().html(read("./chat.html").await?)
         }
         // /echo/{content}
         else if let Some(content) = request.target.strip_prefix("/echo/") {
@@ -133,9 +138,9 @@ impl<E: From<std::io::Error>> Middleware<E> for RouterMiddleware {
         else if let Some(filepath) = request.target.strip_prefix("/files/") {
             let path = PathBuf::from_iter(["./", filepath]);
             match request.method.as_str() {
-                "GET" => read_filepath(&path).await?,
+                "GET" => read_filepath(&path).await.unwrap_or_else(|x| x),
                 "POST" => {
-                    fs::write(path, &request.body).await?;
+                    write(path, &request.body).await?;
                     Response::new(201, "Created")
                 }
                 _ => Response::new(501, "Not Implemented"),
@@ -197,16 +202,16 @@ where
         address: &SocketAddr,
         stream: &mut S,
     ) -> Result<ConnectionFlag, E> {
-        if let Some(upgarde) = response.headers.get("Upgrade") {
-            if upgarde == "websocket" {
-                EchoWebSocket {
-                    stream: Mutex::new(stream),
-                    state: RwLock::new(WebSocketState::default()),
-                    address,
-                }
-                .run()
-                .await?;
+        if let Some(upgarde) = response.headers.get("Upgrade")
+            && upgarde == "websocket"
+        {
+            EchoWebSocket {
+                stream: Mutex::new(stream),
+                state: RwLock::new(WebSocketState::default()),
+                address,
             }
+            .run()
+            .await?;
             Ok(ConnectionFlag::Close)
         } else {
             Ok(ConnectionFlag::Continue)

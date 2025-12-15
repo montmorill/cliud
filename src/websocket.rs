@@ -315,10 +315,10 @@ impl<E> Middleware<E> for WebSocketHandshakeMiddleware {
                 let encoded = BASE64_STANDARD.encode(hashed);
 
                 Ok(Response::new(101, "Switching Protocols")
-                    .header("Upgrade", "websocket")
-                    .header("Connection", "Upgrade")
-                    .header("Sec-Websocket-Accept", encoded)
-                    .header("Sec-Websocket-Version", "13"))
+                    .with_header("Upgrade", "websocket")
+                    .with_header("Connection", "Upgrade")
+                    .with_header("Sec-Websocket-Accept", encoded)
+                    .with_header("Sec-Websocket-Version", "13"))
             } else {
                 Ok(Response::new(400, "Bad Request"))
             }

@@ -103,7 +103,7 @@ impl Response {
     }
 
     #[inline]
-    pub fn header(mut self, key: impl ToString, value: impl ToString) -> Self {
+    pub fn with_header(mut self, key: impl ToString, value: impl ToString) -> Self {
         self.headers.insert(key.to_string(), value.to_string());
         self
     }
@@ -145,18 +145,31 @@ impl Response {
     }
 
     #[inline]
+    pub fn not_found(error: impl ToString) -> Self {
+        Self::new(404, "Not Found").with_body(error.to_string().as_bytes())
+    }
+
+    #[inline]
+    pub fn err(error: impl ToString) -> Self {
+        Self::new(500, "Internal Server Error").with_body(error.to_string().as_bytes())
+    }
+
+    #[inline]
     pub fn plain(self, body: impl Into<Vec<u8>>) -> Self {
-        self.header("Content-Type", "text/plain; charset=utf-8").with_body(body)
+        self.with_header("Content-Type", "text/plain; charset=utf-8")
+            .with_body(body)
     }
 
     #[inline]
     pub fn file(self, body: impl Into<Vec<u8>>) -> Self {
-        self.header("Content-Type", "application/octet-reader").with_body(body)
+        self.with_header("Content-Type", "application/octet-reader")
+            .with_body(body)
     }
 
     #[inline]
     pub fn html(self, body: impl Into<Vec<u8>>) -> Self {
-        self.header("Content-Type", "text/html; charset=utf-8").with_body(body)
+        self.with_header("Content-Type", "text/html; charset=utf-8")
+            .with_body(body)
     }
 }
 
@@ -169,5 +182,12 @@ impl std::fmt::Display for Response {
             self.response_headers(),
             String::from_utf8_lossy(&self.body)
         )
+    }
+}
+
+impl<E: std::error::Error> From<E> for Response {
+    #[inline]
+    fn from(error: E) -> Self {
+        Self::err(error)
     }
 }
