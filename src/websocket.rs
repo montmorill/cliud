@@ -115,13 +115,11 @@ async fn receive_packet(mut stream: impl DerefMut<Target = impl AsyncReadExt + U
 
 async fn send_packet(
     mut stream: impl DerefMut<Target = impl AsyncWriteExt + Unpin>,
-    (opcode, mut data): Packet,
-    mask: u32,
+    (opcode, data): Packet,
 ) -> Result<()> {
     // TODO: Support fragmented packets
 
     let finish = true;
-    let masked = mask != 0;
     let payload_len = match data.len() {
         #[expect(clippy::as_conversions, reason = "data.len() <= 0x7d")]
         len @ ..=0x7d => len as u8, // < 0x7e
@@ -130,8 +128,7 @@ async fn send_packet(
     };
     #[expect(clippy::as_conversions, reason = "fin(1), rsv(3), opcode(4)")]
     let head0 = ((finish as u8) << 7) | opcode as u8;
-    #[expect(clippy::as_conversions, reason = "masked(1), payload_len(7)")]
-    let head1 = ((masked as u8) << 7) | payload_len;
+    let head1 = payload_len;
     stream.write_all(&[head0, head1]).await?;
     if data.len() > 0x7e {
         if data.len() <= 0xffff {
@@ -142,14 +139,6 @@ async fn send_packet(
             stream.write_u8(0x7f).await?;
             #[expect(clippy::as_conversions, reason = "usize::MAX <= u64::MAX")]
             stream.write_u64(data.len() as u64).await?;
-        }
-    }
-    if masked {
-        stream.write_u32(mask).await?;
-        let mask = mask.to_be_bytes();
-        #[expect(clippy::indexing_slicing, reason = "mask has a fixed size of 4")]
-        for (index, value) in data.iter_mut().enumerate() {
-            *value ^= mask[index % 4];
         }
     }
     stream.write_all(&data).await?;
@@ -166,7 +155,6 @@ async fn send_packet(
 pub struct WebSocketState {
     waiting_pong: bool,
     half_closed: bool,
-    pub mask: u32,
     pub timeout: Duration,
     last_ping_time: Instant,
 }
@@ -175,7 +163,6 @@ impl Default for WebSocketState {
     #[inline]
     fn default() -> Self {
         Self {
-            mask: 0,
             timeout: Duration::from_secs(5),
             waiting_pong: false,
             half_closed: false,
@@ -186,13 +173,7 @@ impl Default for WebSocketState {
 
 impl WebSocketState {
     #[inline]
-    pub fn mask(mut self, mask: u32) -> Self {
-        self.mask = mask;
-        self
-    }
-
-    #[inline]
-    pub fn timeout(mut self, timeout: Duration) -> Self {
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
@@ -229,7 +210,7 @@ pub trait WebSocket: Send + Sync {
 pub trait WebSocketExt: WebSocket {
     #[inline]
     async fn send_packet(&mut self, packet: Packet) -> Result<()> {
-        send_packet(self.stream_mut().await, packet, self.state().await.mask).await
+        send_packet(self.stream_mut().await, packet).await
     }
 
     #[inline]

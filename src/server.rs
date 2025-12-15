@@ -22,13 +22,13 @@ impl<E, S> Server<E, S> {
     }
 
     #[inline]
-    pub fn middleware(mut self, middleware: impl Middleware<E> + 'static) -> Self {
+    pub fn with_middleware(mut self, middleware: impl Middleware<E> + 'static) -> Self {
         self.middlewares.push(Arc::new(middleware));
         self
     }
 
     #[inline]
-    pub fn service(mut self, service: impl Service<E, S> + 'static) -> Self {
+    pub fn with_service(mut self, service: impl Service<E, S> + 'static) -> Self {
         self.services.push(Arc::new(service));
         self
     }
@@ -97,7 +97,7 @@ where
     #[inline]
     fn default() -> Self {
         Self::new(Response::new(404, "Not Found"))
-            .middleware(crate::middleware::ContentLengthMiddleware)
-            .service(crate::service::LoggerService)
+            .with_middleware(crate::middleware::ContentLengthMiddleware)
+            .with_service(crate::service::LoggerService)
     }
 }

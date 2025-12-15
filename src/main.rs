@@ -31,10 +31,10 @@ async fn main() -> std::io::Result<()> {
     println!("Listening on {address}");
 
     let server = Server::<BoxError, _>::default()
-        .middleware(cliud::websocket::WebSocketHandshakeMiddleware)
-        .middleware(cliud::compress::CompressMiddleware { min_size: 1024 })
-        .service(EchoWebSocketService)
-        .middleware(RouterMiddleware)
+        .with_middleware(cliud::websocket::WebSocketHandshakeMiddleware)
+        .with_middleware(cliud::compress::CompressMiddleware { min_size: 1024 })
+        .with_service(EchoWebSocketService)
+        .with_middleware(RouterMiddleware)
         .leak();
 
     loop {
