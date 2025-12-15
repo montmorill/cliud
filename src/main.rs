@@ -1,3 +1,5 @@
+#![warn(clippy::unwrap_used)]
+
 use std::env::var;
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
@@ -17,11 +19,14 @@ use tokio::sync::{Mutex, RwLock};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let host = var("CLIUD_HOST").unwrap_or_else(|_| "127.0.0.1".to_owned());
+    let host = var("CLIUD_HOST")
+        .unwrap_or_else(|_| "127.0.0.1".to_owned())
+        .parse()
+        .expect("CLIUD_HOST must be a valid IP address");
     let port = var("CLIUD_PORT")
-        .map(|s| s.parse::<u16>().unwrap())
+        .map(|s| s.parse::<u16>().expect("CLIUD_PORT must be a valid port number"))
         .unwrap_or(4221);
-    let address = SocketAddr::new(host.parse().unwrap(), port);
+    let address = SocketAddr::new(host, port);
     let listener = TcpListener::bind(&address).await?;
     println!("Listening on {address}");
 
@@ -48,7 +53,7 @@ async fn read_filepath(path: &PathBuf) -> std::io::Result<Response> {
         resp.body.extend(
             format!(
                 "<li><a href=\"/files/{}\">./</a></li>\n",
-                path.to_str().unwrap()
+                path.to_str().expect("path must be valid utf-8")
             )
             .as_bytes(),
         );
@@ -56,7 +61,7 @@ async fn read_filepath(path: &PathBuf) -> std::io::Result<Response> {
             resp.body.extend(
                 format!(
                     "<li><a href=\"/files/{}\">../</a></li>\n",
-                    parent.to_str().unwrap()
+                    parent.to_str().expect("parent path must be valid utf-8")
                 )
                 .as_bytes(),
             );
@@ -70,18 +75,14 @@ async fn read_filepath(path: &PathBuf) -> std::io::Result<Response> {
                             .join(entry.file_name())
                             .into_os_string()
                             .into_string()
-                            .unwrap();
+                            .expect("file name must be valid utf-8");
                         match path.strip_prefix("./") {
                             Some(path) => path.to_owned(),
                             None => path,
                         }
                     },
-                    entry.file_name().into_string().unwrap(),
-                    if entry.file_type().await?.is_dir() {
-                        "/"
-                    } else {
-                        ""
-                    },
+                    entry.file_name().into_string().expect("file name must be valid utf-8"),
+                    if entry.file_type().await?.is_dir() { "/" } else { "" },
                 )
                 .as_bytes(),
             );
@@ -97,11 +98,7 @@ struct RouterMiddleware;
 
 #[async_trait]
 impl<E: From<std::io::Error>> Middleware<E> for RouterMiddleware {
-    async fn call(
-        &self,
-        request: &Request,
-        next: &dyn Next<E>,
-    ) -> Result<Response, E> {
+    async fn call(&self, request: &Request, next: &dyn Next<E>) -> Result<Response, E> {
         Ok(if request.target == "/" {
             Response::ok().plain(b"Hello, world!")
         }
@@ -128,9 +125,7 @@ impl<E: From<std::io::Error>> Middleware<E> for RouterMiddleware {
         // /user-agent
         else if request.target == "/user-agent" {
             match request.headers.get("User-Agent") {
-                Some(user_agent) => {
-                    Response::ok().plain(user_agent.clone().into_bytes())
-                }
+                Some(user_agent) => Response::ok().plain(user_agent.clone().into_bytes()),
                 None => Response::ok().plain(b"User-Agent not found!"),
             }
         }

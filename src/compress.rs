@@ -3,8 +3,7 @@ use std::io::Write as _;
 
 use async_trait::async_trait;
 use flate2::Compression;
-use flate2::write::{DeflateDecoder, GzDecoder, ZlibDecoder};
-use flate2::write::{DeflateEncoder, GzEncoder, ZlibEncoder};
+use flate2::write::{DeflateDecoder, DeflateEncoder, GzDecoder, GzEncoder, ZlibDecoder, ZlibEncoder};
 
 use crate::http::{Request, Response};
 use crate::middleware::{Middleware, Next};

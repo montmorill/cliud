@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::{collections::HashMap, num::ParseIntError};
+use std::num::ParseIntError;
+
 use tokio::io::{AsyncBufRead, AsyncBufReadExt as _, AsyncReadExt as _};
 
 #[derive(Debug, thiserror::Error)]
@@ -144,20 +146,17 @@ impl Response {
 
     #[inline]
     pub fn plain(self, body: impl Into<Vec<u8>>) -> Self {
-        self.header("Content-Type", "text/plain; charset=utf-8")
-            .with_body(body)
+        self.header("Content-Type", "text/plain; charset=utf-8").with_body(body)
     }
 
     #[inline]
     pub fn file(self, body: impl Into<Vec<u8>>) -> Self {
-        self.header("Content-Type", "application/octet-reader")
-            .with_body(body)
+        self.header("Content-Type", "application/octet-reader").with_body(body)
     }
 
     #[inline]
     pub fn html(self, body: impl Into<Vec<u8>>) -> Self {
-        self.header("Content-Type", "text/html; charset=utf-8")
-            .with_body(body)
+        self.header("Content-Type", "text/html; charset=utf-8").with_body(body)
     }
 }
 

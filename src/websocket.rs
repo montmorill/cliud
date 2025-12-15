@@ -1,4 +1,7 @@
-#![allow(async_fn_in_trait, reason = "Yes, I don't care about auto traits like `Send` on the `Future`")]
+#![allow(
+    async_fn_in_trait,
+    reason = "Yes, I don't care about auto traits like `Send` on the `Future`"
+)]
 
 use std::ops::{Deref, DerefMut};
 use std::time::{Duration, Instant};
@@ -61,9 +64,7 @@ impl TryFrom<u8> for Opcode {
     }
 }
 
-async fn receive_packet(
-    mut stream: impl DerefMut<Target = impl AsyncReadExt + Unpin>,
-) -> Result<Packet> {
+async fn receive_packet(mut stream: impl DerefMut<Target = impl AsyncReadExt + Unpin>) -> Result<Packet> {
     let mut mask = [0_u8; 4];
     let mut data = Vec::new();
     let mut buf = Vec::new();

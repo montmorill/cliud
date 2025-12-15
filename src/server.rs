@@ -52,18 +52,15 @@ impl<E, S> Server<E, S> {
                 Ok((Some(request), response))
             }
             Err(http::Error::BadRequestLine(line)) => {
-                let response = Response::new(400, "Bad Request")
-                    .plain(format!("Bad Request Line: {line}"));
+                let response = Response::new(400, "Bad Request").plain(format!("Bad Request Line: {line}"));
                 Ok((None, response))
             }
             Err(http::Error::BadContentLength(length)) => {
-                let response = Response::new(400, "Bad Request")
-                    .plain(format!("Bad Content Length: {length}"));
+                let response = Response::new(400, "Bad Request").plain(format!("Bad Content Length: {length}"));
                 Ok((None, response))
             }
             Err(http::Error::ContentLengthRequired) => {
-                let response = Response::new(411, "Length Required")
-                    .plain("Content Length Required");
+                let response = Response::new(411, "Length Required").plain("Content Length Required");
                 Ok((None, response))
             }
             Err(http::Error::IO(e)) => Err(e.into()),
@@ -71,11 +68,7 @@ impl<E, S> Server<E, S> {
     }
 
     #[inline]
-    pub async fn handle_connection(
-        &'static self,
-        mut stream: S,
-        address: SocketAddr,
-    ) -> Result<(), E>
+    pub async fn handle_connection(&'static self, mut stream: S, address: SocketAddr) -> Result<(), E>
     where
         E: From<std::io::Error> + Send,
         S: AsyncRead + AsyncWrite + Unpin,
@@ -87,9 +80,7 @@ impl<E, S> Server<E, S> {
 
             if let Some(request) = request {
                 for service in self.services.iter() {
-                    let flag = service
-                        .call(&request, &response, &address, &mut stream)
-                        .await?;
+                    let flag = service.call(&request, &response, &address, &mut stream).await?;
                     if let ConnectionFlag::Close = flag {
                         return Ok(());
                     }
