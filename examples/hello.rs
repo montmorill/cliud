@@ -1,3 +1,5 @@
+#![feature(str_split_remainder)]
+
 use std::env::var;
 use std::net::SocketAddr;
 
@@ -46,14 +48,13 @@ impl<E: From<std::io::Error>> Middleware<E> for RouterMiddleware {
         // /cat/{status_code}/{description}/{body}
         else if let Some(path) = request.target.strip_prefix("/cat/") {
             let mut splited = path.split('/');
-            let (status_code, description, body) = (|| {
+            (|| {
                 let status_code = splited.next()?;
                 let description = splited.next()?;
-                let body: String = splited.collect::<Vec<_>>().join("/");
-                Some((status_code, description, body))
+                let body = splited.remainder().unwrap_or_default();
+                Some(Response::new(status_code, description).with_body(body))
             })()
-            .unwrap_or_else(|| ("400", "Bad Request", String::new()));
-            Response::new(status_code, description).with_body(body)
+            .unwrap_or_else(|| Response::new(400, "Bad Request"))
         }
         // /user-agent
         else if request.target == "/user-agent" {
