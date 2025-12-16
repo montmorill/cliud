@@ -12,7 +12,7 @@
       <div id="log" disabled></div>
     </div>
     <script>
-      let ws = new WebSocket(`ws://${window.location.host}`);
+      let ws = new WebSocket(`ws://${window.location.host}/ws`);
 
       function log(...data) {
         document.getElementById("log").innerHTML += `<div>${data.join(" ")}</div>`;
